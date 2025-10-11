@@ -16,14 +16,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 
-// Mock data
-const mockProducts = [
-  { id: 1, nombre: "Eau de Parfum Clásico", codigo: "EDP001", categoria: "Perfumes", stock: 45, precio: 89.99, estado: "Activo" },
-  { id: 2, nombre: "Fragancia Floral", codigo: "FF002", categoria: "Fragancias", stock: 23, precio: 69.99, estado: "Activo" },
-  { id: 3, nombre: "Colonia Fresca", codigo: "CF003", categoria: "Colonias", stock: 78, precio: 49.99, estado: "Activo" },
-  { id: 4, nombre: "Perfume de Noche", codigo: "PN004", categoria: "Perfumes", stock: 12, precio: 129.99, estado: "Bajo Stock" },
-  { id: 5, nombre: "Esencia Natural", codigo: "EN005", categoria: "Esencias", stock: 156, precio: 39.99, estado: "Activo" },
-];
+// Los productos se obtienen desde la API en `useEffect` usando getProductos()
 
 export default function Productos() {
   const [searchTerm, setSearchTerm] = useState("");
@@ -37,10 +30,13 @@ export default function Productos() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filteredProducts = mockProducts.filter((product) =>
-    product.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    product.codigo.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredProducts = productos.filter((product) => {
+    const term = searchTerm.toLowerCase();
+    return (
+      (product.nombre || "").toLowerCase().includes(term) ||
+      (product.tipo || "").toLowerCase().includes(term)
+    );
+  });
 
   return (
     <Layout>
@@ -89,38 +85,51 @@ export default function Productos() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Código</TableHead>
+                    <TableHead>ID</TableHead>
                     <TableHead>Nombre</TableHead>
-                    <TableHead>Categoría</TableHead>
+                    <TableHead>Tipo</TableHead>
+                    <TableHead>Unidad</TableHead>
                     <TableHead>Stock</TableHead>
-                    <TableHead>Precio</TableHead>
-                    <TableHead>Estado</TableHead>
+                    <TableHead>Costo</TableHead>
+                    <TableHead>Precio Venta</TableHead>
+                    <TableHead>Proveedor</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredProducts.map((product) => (
+                  {filteredProducts.map((product: any) => (
                     <TableRow key={product.id} className="hover:bg-muted/50 transition-smooth">
-                      <TableCell className="font-mono text-sm">{product.codigo}</TableCell>
+                      <TableCell className="font-mono text-sm">{product.id}</TableCell>
                       <TableCell className="font-medium">{product.nombre}</TableCell>
-                      <TableCell>{product.categoria}</TableCell>
+                      <TableCell>{product.tipo}</TableCell>
+                      <TableCell>{product.unidad}</TableCell>
                       <TableCell>
-                        <span className={product.stock < 20 ? "text-destructive font-semibold" : ""}>
+                        <span className={product.stock && product.stock < 20 ? "text-destructive font-semibold" : ""}>
                           {product.stock}
                         </span>
                       </TableCell>
-                      <TableCell>${product.precio}</TableCell>
-                      <TableCell>
-                        <Badge variant={product.estado === "Activo" ? "default" : "destructive"}>
-                          {product.estado}
-                        </Badge>
-                      </TableCell>
+                      <TableCell>{product.costo ?? "-"}</TableCell>
+                      <TableCell>{product.precio_venta ?? "-"}</TableCell>
+                      <TableCell>{product.proveedor_id ?? "-"}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button variant="ghost" size="icon">
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={async () => {
+                              try {
+                                await deleteProducto(product.id);
+                                setProductos((prev) => prev.filter((p) => p.id !== product.id));
+                                toast.success("Producto eliminado");
+                              } catch (err) {
+                                console.error(err);
+                                toast.error("Error al eliminar producto");
+                              }
+                            }}
+                          >
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
                         </div>
