@@ -1,5 +1,6 @@
-import { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Layout } from "@/components/Layout";
+import { getProductos, deleteProducto } from "@/integrations/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { toast } from "sonner";
 
 // Mock data
 const mockProducts = [
@@ -25,6 +27,15 @@ const mockProducts = [
 
 export default function Productos() {
   const [searchTerm, setSearchTerm] = useState("");
+  const [productos, setProductos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getProductos()
+      .then(setProductos)
+      .catch(() => toast.error("Error al cargar productos"))
+      .finally(() => setLoading(false));
+  }, []);
 
   const filteredProducts = mockProducts.filter((product) =>
     product.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -72,49 +83,53 @@ export default function Productos() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Código</TableHead>
-                  <TableHead>Nombre</TableHead>
-                  <TableHead>Categoría</TableHead>
-                  <TableHead>Stock</TableHead>
-                  <TableHead>Precio</TableHead>
-                  <TableHead>Estado</TableHead>
-                  <TableHead className="text-right">Acciones</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredProducts.map((product) => (
-                  <TableRow key={product.id} className="hover:bg-muted/50 transition-smooth">
-                    <TableCell className="font-mono text-sm">{product.codigo}</TableCell>
-                    <TableCell className="font-medium">{product.nombre}</TableCell>
-                    <TableCell>{product.categoria}</TableCell>
-                    <TableCell>
-                      <span className={product.stock < 20 ? "text-destructive font-semibold" : ""}>
-                        {product.stock}
-                      </span>
-                    </TableCell>
-                    <TableCell>${product.precio}</TableCell>
-                    <TableCell>
-                      <Badge variant={product.estado === "Activo" ? "default" : "destructive"}>
-                        {product.estado}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="icon">
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon">
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    </TableCell>
+            {loading ? (
+              <div>Cargando...</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Código</TableHead>
+                    <TableHead>Nombre</TableHead>
+                    <TableHead>Categoría</TableHead>
+                    <TableHead>Stock</TableHead>
+                    <TableHead>Precio</TableHead>
+                    <TableHead>Estado</TableHead>
+                    <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredProducts.map((product) => (
+                    <TableRow key={product.id} className="hover:bg-muted/50 transition-smooth">
+                      <TableCell className="font-mono text-sm">{product.codigo}</TableCell>
+                      <TableCell className="font-medium">{product.nombre}</TableCell>
+                      <TableCell>{product.categoria}</TableCell>
+                      <TableCell>
+                        <span className={product.stock < 20 ? "text-destructive font-semibold" : ""}>
+                          {product.stock}
+                        </span>
+                      </TableCell>
+                      <TableCell>${product.precio}</TableCell>
+                      <TableCell>
+                        <Badge variant={product.estado === "Activo" ? "default" : "destructive"}>
+                          {product.estado}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" size="icon">
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon">
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
           </CardContent>
         </Card>
       </div>

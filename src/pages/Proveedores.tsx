@@ -1,29 +1,52 @@
-import { Layout } from "@/components/Layout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Users } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { getProveedores, deleteProveedor } from "@/integrations/api";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 export default function Proveedores() {
+  const [proveedores, setProveedores] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getProveedores()
+      .then(setProveedores)
+      .catch(() => toast.error("Error al cargar proveedores"))
+      .finally(() => setLoading(false));
+  }, []);
+
   return (
-    <Layout>
-      <div className="space-y-6">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Proveedores</h2>
-          <p className="text-muted-foreground">Gestión de proveedores</p>
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Módulo en Desarrollo
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground">
-              El módulo de gestión de proveedores estará disponible próximamente.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    </Layout>
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Proveedores</h1>
+      {loading ? (
+        <div>Cargando...</div>
+      ) : (
+        <table className="w-full border">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Teléfono</th>
+              <th>Email</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {proveedores.map((p) => (
+              <tr key={p.id}>
+                <td>{p.nombre}</td>
+                <td>{p.telefono}</td>
+                <td>{p.email}</td>
+                <td>
+                  <Button size="sm" variant="destructive" onClick={async () => {
+                    await deleteProveedor(p.id);
+                    setProveedores(proveedores.filter(pr => pr.id !== p.id));
+                    toast.success("Proveedor eliminado");
+                  }}>Eliminar</Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }

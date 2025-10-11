@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { login } from "@/integrations/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -17,12 +18,15 @@ export default function Login() {
     e.preventDefault();
     setIsLoading(true);
 
-    // TODO: Implement actual API call
-    setTimeout(() => {
+    try {
+      await login(email, password);
       toast.success("Inicio de sesión exitoso");
       navigate("/dashboard");
+    } catch (err: any) {
+      toast.error(err.message || "Error de autenticación");
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   return (

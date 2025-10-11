@@ -1,29 +1,39 @@
-import { Layout } from "@/components/Layout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CreditCard } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { getBancos } from "@/integrations/api";
+import { toast } from "sonner";
 
 export default function Bancos() {
+  const [bancos, setBancos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getBancos()
+      .then(setBancos)
+      .catch(() => toast.error("Error al cargar bancos"))
+      .finally(() => setLoading(false));
+  }, []);
+
   return (
-    <Layout>
-      <div className="space-y-6">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Bancos</h2>
-          <p className="text-muted-foreground">Gestión de bancos y formas de pago</p>
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CreditCard className="h-5 w-5" />
-              Módulo en Desarrollo
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground">
-              El módulo de gestión de bancos estará disponible próximamente.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    </Layout>
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Bancos</h1>
+      {loading ? (
+        <div>Cargando...</div>
+      ) : (
+        <table className="w-full border">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bancos.map((b) => (
+              <tr key={b.id}>
+                <td>{b.nombre}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }

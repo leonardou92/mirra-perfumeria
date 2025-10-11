@@ -1,29 +1,45 @@
-import { Layout } from "@/components/Layout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Receipt } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { getPagos } from "@/integrations/api";
+import { toast } from "sonner";
 
 export default function Pagos() {
+  const [pagos, setPagos] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getPagos()
+      .then(setPagos)
+      .catch(() => toast.error("Error al cargar pagos"))
+      .finally(() => setLoading(false));
+  }, []);
+
   return (
-    <Layout>
-      <div className="space-y-6">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Pagos</h2>
-          <p className="text-muted-foreground">Gestión de pagos y transacciones</p>
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Receipt className="h-5 w-5" />
-              Módulo en Desarrollo
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground">
-              El módulo de gestión de pagos estará disponible próximamente.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    </Layout>
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Pagos</h1>
+      {loading ? (
+        <div>Cargando...</div>
+      ) : (
+        <table className="w-full border">
+          <thead>
+            <tr>
+              <th>Monto</th>
+              <th>Banco</th>
+              <th>Forma de Pago</th>
+              <th>Pedido Venta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagos.map((p) => (
+              <tr key={p.id}>
+                <td>{p.monto}</td>
+                <td>{p.banco_id}</td>
+                <td>{p.forma_pago_id}</td>
+                <td>{p.pedido_venta_id}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
