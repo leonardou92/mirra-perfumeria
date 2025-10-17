@@ -34,6 +34,23 @@ export async function deleteProveedor(id: number) {
   return apiFetch(`/proveedores/${id}`, { method: "DELETE" });
 }
 
+// Almacenes
+export async function getAlmacenes() {
+  return apiFetch("/almacenes");
+}
+export async function getAlmacen(id: number) {
+  return apiFetch(`/almacenes/${id}`);
+}
+export async function createAlmacen(data: any) {
+  return apiFetch("/almacenes", { method: "POST", body: JSON.stringify(data) });
+}
+export async function updateAlmacen(id: number, data: any) {
+  return apiFetch(`/almacenes/${id}`, { method: "PUT", body: JSON.stringify(data) });
+}
+export async function deleteAlmacen(id: number) {
+  return apiFetch(`/almacenes/${id}`, { method: "DELETE" });
+}
+
 // Bancos
 export async function getBancos() {
   return apiFetch("/bancos");
