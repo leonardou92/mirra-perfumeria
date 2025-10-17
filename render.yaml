@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: aroma-zenith
+    env: node
+    plan: free
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    disk: 512
+    instanceCount: 1
+    envVars: []
