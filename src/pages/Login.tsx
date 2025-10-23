@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { login } from "@/integrations/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,7 +21,10 @@ export default function Login() {
     try {
       await login(email, password);
       toast.success("Inicio de sesión exitoso");
-      navigate("/dashboard");
+      // Si venimos de una ruta protegida, redirigir allí; si no, al dashboard
+      const state: any = (location as any).state;
+      const redirectTo = state?.from?.pathname || "/dashboard";
+      navigate(redirectTo, { replace: true });
     } catch (err: any) {
       toast.error(err.message || "Error de autenticación");
     } finally {

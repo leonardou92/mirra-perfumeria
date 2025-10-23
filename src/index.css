@@ -8,17 +8,19 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 270 50% 15%;
+    /* Palette principal: Cream (fondo) y Copper (tipografía) */
+    --background: 38 30% 96%; /* cream very light */
+    --foreground: 20 30% 18%; /* copper dark */
 
-    --card: 0 0% 100%;
-    --card-foreground: 270 50% 15%;
+  --card: 38 30% 100%;
+  --card-foreground: 20 30% 18%;
 
     --popover: 0 0% 100%;
     --popover-foreground: 270 50% 15%;
 
-    --primary: 270 70% 45%;
-    --primary-foreground: 0 0% 100%;
+  /* Primary brand color: copper */
+  --primary: 20 35% 40%;
+  --primary-foreground: 0 0% 100%;
 
     --secondary: 270 30% 96%;
     --secondary-foreground: 270 70% 45%;
@@ -26,21 +28,30 @@ All colors MUST be HSL.
     --muted: 270 20% 96%;
     --muted-foreground: 270 20% 45%;
 
-    --accent: 40 90% 55%;
-    --accent-foreground: 270 50% 15%;
+  /* Accent default (can be mapped to amber/rose/green depending on context) */
+  --accent: 30 85% 50%;
+  --accent-foreground: 20 30% 18%;
+
+  /* Acentos de la marca (paleta secundaria) */
+  --rose-500: 340 90% 52%;
+  --earth-500: 20 40% 35%;
+  --amber-500: 40 90% 50%;
+  --green-500: 140 50% 36%;
+  --sky-500: 200 80% 52%;
+  --neutral-500: 35 20% 80%;
 
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 270 20% 90%;
-    --input: 270 20% 90%;
-    --ring: 270 70% 45%;
+  --border: 35 15% 90%;
+  --input: 35 15% 95%;
+  --ring: 20 35% 40%;
 
     --radius: 0.5rem;
 
-    --sidebar-background: 270 60% 8%;
-    --sidebar-foreground: 270 20% 95%;
-    --sidebar-primary: 270 70% 45%;
+  --sidebar-background: 38 30% 12%;
+  --sidebar-foreground: 38 30% 96%;
+  --sidebar-primary: 20 35% 40%;
     --sidebar-primary-foreground: 0 0% 100%;
     --sidebar-accent: 270 50% 15%;
     --sidebar-accent-foreground: 270 20% 95%;
@@ -53,9 +64,9 @@ All colors MUST be HSL.
     --chart-4: 340 75% 55%;
     --chart-5: 160 60% 45%;
     
-    --gradient-primary: linear-gradient(135deg, hsl(270 70% 45%) 0%, hsl(270 80% 60%) 100%);
-    --gradient-accent: linear-gradient(135deg, hsl(40 90% 55%) 0%, hsl(30 85% 60%) 100%);
-    --shadow-elegant: 0 10px 30px -10px hsl(270 70% 45% / 0.3);
+  --gradient-primary: linear-gradient(135deg, hsl(20 35% 40%) 0%, hsl(20 45% 55%) 100%);
+  --gradient-accent: linear-gradient(135deg, hsl(40 90% 55%) 0%, hsl(340 80% 53%) 100%);
+  --shadow-elegant: 0 10px 30px -10px hsl(20 35% 40% / 0.12);
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 

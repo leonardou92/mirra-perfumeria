@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
+import Hero from "./pages/Hero";
 import Dashboard from "./pages/Dashboard";
 import Productos from "./pages/Productos";
 import Proveedores from "./pages/Proveedores";
@@ -14,6 +15,7 @@ import Contactos from "./pages/Contactos";
 import Bancos from "./pages/Bancos";
 import Pagos from "./pages/Pagos";
 import NotFound from "./pages/NotFound";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -24,17 +26,17 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<Navigate to="/login" replace />} />
+          <Route path="/" element={<Hero />} />
           <Route path="/login" element={<Login />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/productos" element={<Productos />} />
-          <Route path="/proveedores" element={<Proveedores />} />
-          <Route path="/almacenes" element={<Almacenes />} />
-          <Route path="/formulas" element={<Formulas />} />
-          <Route path="/pedidos" element={<Pedidos />} />
-          <Route path="/contactos" element={<Contactos />} />
-          <Route path="/bancos" element={<Bancos />} />
-          <Route path="/pagos" element={<Pagos />} />
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/productos" element={<ProtectedRoute><Productos /></ProtectedRoute>} />
+          <Route path="/proveedores" element={<ProtectedRoute><Proveedores /></ProtectedRoute>} />
+          <Route path="/almacenes" element={<ProtectedRoute><Almacenes /></ProtectedRoute>} />
+          <Route path="/formulas" element={<ProtectedRoute><Formulas /></ProtectedRoute>} />
+          <Route path="/pedidos" element={<ProtectedRoute><Pedidos /></ProtectedRoute>} />
+          <Route path="/contactos" element={<ProtectedRoute><Contactos /></ProtectedRoute>} />
+          <Route path="/bancos" element={<ProtectedRoute><Bancos /></ProtectedRoute>} />
+          <Route path="/pagos" element={<ProtectedRoute><Pagos /></ProtectedRoute>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

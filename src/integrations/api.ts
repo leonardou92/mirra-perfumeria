@@ -4,6 +4,32 @@
 export async function getProductos() {
   return apiFetch("/productos");
 }
+export async function getProductosPaginated(page = 1, per_page = 12) {
+  // Usar el endpoint del catálogo según lo indicado por el usuario
+  // El backend debería soportar parámetros de paginación `page` y `per_page`.
+  try {
+    return await apiFetch(`/productos/catalogo?page=${page}&per_page=${per_page}`);
+  } catch (err) {
+    // Si el endpoint del catálogo falla (500), intentar el endpoint genérico /productos como fallback.
+    // Esto evita romper la UI mientras se corrige el backend.
+    console.warn("getProductosPaginated: catalogo endpoint failed, falling back to /productos", err);
+    try {
+      return await apiFetch(`/productos`);
+    } catch (err2) {
+      // Re-throw el error original para que el frontend lo maneje
+      throw err;
+    }
+  }
+}
+
+// Endpoint público del catálogo que NO requiere token
+export async function getCatalogoPaginated(page = 1, per_page = 12) {
+  // El endpoint público correcto es /api/productos/catalogo
+  const url = `${API_URL}/productos/catalogo?page=${page}&per_page=${per_page}`;
+  const res = await fetch(url, { method: "GET", headers: { "Content-Type": "application/json" } });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
 export async function getProducto(id: number) {
   return apiFetch(`/productos/${id}`);
 }
