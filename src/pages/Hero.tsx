@@ -109,7 +109,7 @@ export default function Hero() {
 
       <section className="bg-gradient-to-r from-cream-50 via-cream-100 to-copper-50">
         <div className="max-w-7xl mx-auto px-6 py-16 text-center">
-          <h1 className="text-4xl md:text-5xl font-extrabold text-copper-800">Descubre tu Fragancia Perfecta</h1>
+          <h1 className="text-4xl md:text-5xl font-extrabold text-copper-800 font-playfair">Descubre tu Fragancia Perfecta</h1>
           <p className="mt-3 text-copper-700 max-w-2xl mx-auto">Explora nuestra colección exclusiva de perfumes de las mejores marcas del mundo</p>
           <div className="mt-8 flex items-center justify-center gap-3">
             <a href="#catalog" className="px-6 py-3 rounded-lg bg-copper-600 text-cream-50 font-semibold shadow-md hover:scale-105 transition">Ver catálogo</a>

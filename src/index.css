@@ -139,4 +139,9 @@ All colors MUST be HSL.
   .transition-smooth {
     transition: var(--transition-smooth);
   }
+
+  /* Playfair Display helper */
+  .font-playfair {
+    font-family: 'Playfair Display', serif;
+  }
 }
