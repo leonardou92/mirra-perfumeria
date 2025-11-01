@@ -255,7 +255,7 @@ export default function Hero() {
                         </div>
                       </div>
                     </div>
-
+                    {/*prueba de PR */}
                     <div className="flex justify-end gap-2 items-center">
                       <button type="button" className="px-4 py-2 rounded-md border bg-white hover:bg-cream-50 transition-smooth" onClick={() => setIsCheckoutOpen(false)}>Cancelar</button>
                       <div className="relative">
