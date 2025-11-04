@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Header from '@/components/Header';
 import ProductCard from '@/components/ProductCard';
 import CategoryFilter from '@/components/CategoryFilter';
@@ -117,7 +118,7 @@ export default function Hero() {
           <p className="mt-3 text-copper-700 max-w-2xl mx-auto">Explora nuestra colección exclusiva de perfumes de las mejores marcas del mundo</p>
           <div className="mt-8 flex items-center justify-center gap-3">
             <a href="#catalog" className="px-6 py-3 rounded-lg bg-copper-600 text-cream-50 font-semibold shadow-md hover:scale-105 transition">Ver catálogo</a>
-            <a href="#about" className="px-5 py-3 rounded-lg border border-cream-200 bg-cream-50 text-copper-700 font-medium hover:bg-cream-100 transition">Conócenos</a>
+            <Link to="/about" className="px-5 py-3 rounded-lg border border-cream-200 bg-cream-50 text-copper-700 font-medium hover:bg-cream-100 transition">Conócenos</Link>
           </div>
         </div>
       </section>
