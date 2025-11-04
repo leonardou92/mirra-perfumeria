@@ -8,6 +8,7 @@ import { Product } from '@/lib/types';
 import { toast } from 'sonner';
 import { Loader2, X, Search, User, Phone, FileText } from 'lucide-react';
 import { createPedidoVentaPublic } from '@/integrations/api';
+import ProductCarousel from '@/components/SocialMediaCarousel';
 
 export default function Hero() {
   const [fullProducts, setFullProducts] = useState<Product[] | null>(null);
@@ -121,6 +122,9 @@ export default function Hero() {
         </div>
       </section>
 
+      {/* Featured Products Carousel */}
+      {products.length > 0 && <ProductCarousel products={products} />}
+      
       <div className="max-w-7xl mx-auto px-6">
         <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="w-full md:w-1/2">
