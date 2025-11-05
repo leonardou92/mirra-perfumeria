@@ -13,31 +13,34 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        'bell-mt': ['Bell MT', 'serif'],
+        'montserrat': ['Montserrat', 'sans-serif'],
+      },
       colors: {
-        // Paletas para el hero (cream / copper)
-        cream: {
-          50: '#fdfcfb',
-          100: '#faf8f5',
-          200: '#f5f1ea',
-          300: '#ede7dc',
-          400: '#e4dac9',
-          500: '#d9cab3',
-          600: '#c9b599',
-          700: '#b39c7d',
-          800: '#8f7d63',
-          900: '#6d5f4a',
+        // Nueva paleta de colores
+        gray: {
+          100: '#f5f5f5',
+          200: '#e5e5e5',
+          300: '#d4d4d4',
+          400: '#a3a3a3',
+          500: '#878787',
+          600: '#6b6b6b',
+          700: '#4f4f4f',
+          800: '#333333',
+          900: '#1a1a1a',
         },
-        copper: {
-          50: '#fdf8f3',
-          100: '#f9ede0',
-          200: '#f3ddc4',
-          300: '#eac49d',
-          400: '#dda26e',
-          500: '#d4844e',
-          600: '#c66d3f',
-          700: '#a65836',
-          800: '#854831',
-          900: '#6d3d2b',
+        primary: {
+          DEFAULT: '#ca9e67',
+          100: '#f5eee6',
+          200: '#e8d9c5',
+          300: '#dcc4a4',
+          400: '#d1b083',
+          500: '#ca9e67',
+          600: '#b58a53',
+          700: '#a07746',
+          800: '#8b6439',
+          900: '#76522d',
         },
 
         // Paleta de acentos: rosas, tierra, amarillos, verdes, azules y neutrales
@@ -116,31 +119,27 @@ export default {
 
         // Semantic tokens mapped to the palette
         brand: {
-          DEFAULT: '#d4844e', // copper-500
+          DEFAULT: '#ca9e67',
           foreground: '#ffffff',
         },
         'brand-dark': {
-          DEFAULT: '#c66d3f', // copper-600
+          DEFAULT: '#b58a53',
           foreground: '#ffffff',
         },
         site: {
-          DEFAULT: '#faf8f5', // cream-100
+          DEFAULT: '#faf8f5',
         },
         surface: {
           DEFAULT: '#fff',
-          muted: '#f5f1ea', // cream-200
+          muted: '#f5f1ea',
         },
 
-        // keep existing CSS-var based theme tokens (used elsewhere)
+        // CSS-var based theme tokens
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
-        primary: {
-          DEFAULT: "hsl(var(--primary))",
-          foreground: "hsl(var(--primary-foreground))",
-        },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
           foreground: "hsl(var(--secondary-foreground))",
