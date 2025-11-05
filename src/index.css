@@ -12,13 +12,13 @@
 @layer base {
   :root {
     /* Nueva paleta de colores */
-    --background: 0 0% 100%;
+    --background: 0 0% 95%;
     --foreground: 0 0% 13%;
-    --card: 0 0% 100%;
-  --card-foreground: 20 30% 18%;
+    --card: 0 0% 98%;
+    --card-foreground: 0 0% 20%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 270 50% 15%;
+    --popover: 0 0% 98%;
+    --popover-foreground: 0 0% 20%;
 
   /* Primary brand color: #ca9e67 */
   --primary: 32 45% 60%;
@@ -26,7 +26,7 @@
 
   /* Secondary color: #878787 */
   --secondary: 0 0% 53%;
-  --secondary-foreground: 0 0% 100%;
+  --secondary-foreground: 0 0% 20%;
 
     --muted: 270 20% 96%;
     --muted-foreground: 270 20% 45%;
@@ -46,8 +46,9 @@
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 100%;
 
-  --border: 35 15% 90%;
-  --input: 35 15% 95%;
+  --border: 0 0% 90%;
+  --input: 0 0% 100%;
+  --ring: 0 0% 90%;
   --ring: 20 35% 40%;
 
     --radius: 0.5rem;
@@ -119,9 +120,8 @@
   }
 
   body {
-    @apply bg-gradient-to-br from-gray-50 via-white to-gray-100 text-foreground font-montserrat min-h-screen;
+    @apply bg-background text-foreground font-montserrat;
     font-feature-settings: "rlig" 1, "calt" 1;
-    background-attachment: fixed;
   }
 
   h1, h2, h3, h4, h5, h6 {
