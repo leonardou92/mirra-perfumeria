@@ -82,14 +82,14 @@ export default function AboutUs() {
                   <div className="ml-4">
                     <h3 className="text-lg font-medium text-copper-800">Teléfono / WhatsApp</h3>
                     <a 
-                      href="https://wa.me/584141454086" 
+                      href="https://wa.me/04141454086" 
                       target="_blank" 
                       rel="noopener noreferrer"
                       className="text-copper-600 hover:text-copper-800 transition-colors"
                     >
-                      (0414) 145-4086
+                      (0414) 145-40-86
                     </a>
-                    <p className="text-sm text-copper-500 mt-1">Horario de atención: Lunes a Sábado 9:00 AM - 7:00 PM</p>
+                    <p className="text-sm text-copper-500 mt-1">Horario de atención: Lunes a Sábado 10:00 AM - 7:00 PM</p>
                   </div>
                 </div>
 
@@ -108,6 +108,26 @@ export default function AboutUs() {
                       @mirraperfumeria.ve
                     </a>
                     <p className="text-sm text-copper-500 mt-1">Descubre nuestras promociones y nuevos productos</p>
+                  </div>
+                </div>
+
+                <div className="flex items-start mt-6">
+                  <div className="flex-shrink-0 bg-copper-100 p-3 rounded-full">
+                    <svg className="h-6 w-6 text-copper-700" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.17.63 2.33 1.52 3.14.93.83 2.15 1.25 3.35 1.29v4.1c-1.44-.05-2.89-.35-4.15-.96-.5-.26-.97-.6-1.38-1-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
+                    </svg>
+                  </div>
+                  <div className="ml-4">
+                    <h3 className="text-lg font-medium text-copper-800">Síguenos en TikTok</h3>
+                    <a 
+                      href="https://www.tiktok.com/@mirraperfumeria.ve" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-copper-600 hover:text-copper-800 transition-colors"
+                    >
+                      @mirraperfumeria.ve
+                    </a>
+                    <p className="text-sm text-copper-500 mt-1">Mira nuestros videos y mantente al día con las últimas tendencias</p>
                   </div>
                 </div>
 
