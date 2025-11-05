@@ -13,8 +13,8 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
           <div className="flex items-center space-x-3">
-            <div className="bg-[#878787] p-2.5 rounded-lg shadow-md">
-              <img src="/logo.png" alt="Mirra Perfumería" className="w-10 h-10 rounded" />
+            <div className="p-1.5 bg-white rounded-full shadow-md ring-2 ring-[#ca9e67] ring-offset-2">
+              <img src="/logo.png" alt="Mirra Perfumería" className="w-12 h-12 rounded-full object-cover" />
             </div>
             <div>
               <h1 className="text-2xl font-bell-mt font-bold text-gray-900 tracking-tight">Mirra Perfumería</h1>
