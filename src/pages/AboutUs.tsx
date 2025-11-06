@@ -1,7 +1,9 @@
 import React from 'react';
 import { MapPin, Instagram, Phone, Calendar } from 'lucide-react';
 import Header from '@/components/Header';
+import Footer from '@/components/Footer';
 import useCart from '@/hooks/use-cart';
+
 
 export default function AboutUs() {
   const { count } = useCart();
@@ -35,12 +37,10 @@ export default function AboutUs() {
                 Nuestra Ubicación
               </h2>
               <p className="text-copper-700 mb-4">
-                Urbanización Raúl Leoni, Centro Comercial Aviur, Local #4, 
-                diagonal al Restaurante Yangtze, San Félix, Estado Bolívar.
-              </p>
+                Urbanización Raúl Leoni. Centro Comercial Aviur local #4. Diagonal al Restaurant Yangtze.              </p>
               <div className="aspect-w-16 aspect-h-9 rounded-lg overflow-hidden">
                 <iframe
-                  src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3940.5832604932007!2d-62.64178792477939!3d8.34194339171285!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x8dcbf1c6c5c5f1a5%3A0x8f8b9b7d8e8e8e8e!2sCentro%20Comercial%20Aviur%2C%20San%20F%C3%A9lix%2C%20Bol%C3%ADvar%2C%20Venezuela!5e0!3m2!1sen!2sve!4v1635960000000!5m2!1sen!2sve"
+                  src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d627.490112045992!2d-71.670243!3d10.659922!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x8e8998c0f5a1c6b5%3A0x8f8b9b7d8e8e8e8e!2s10%C2%B039&#39;35.8%22N%2071%C2%B040&#39;01.7%22W!5e0!3m2!1sen!2sve!4v1635960000000!5m2!1sen!2sve&z=20&maptype=satellite&center=10.659922,-71.670243"
                   width="100%"
                   height="300"
                   style={{ border: 0 }}
@@ -80,14 +80,14 @@ export default function AboutUs() {
                   <div className="ml-4">
                     <h3 className="text-lg font-medium text-copper-800">Teléfono / WhatsApp</h3>
                     <a 
-                      href="https://wa.me/584141454086" 
+                      href="https://wa.me/04141454086" 
                       target="_blank" 
                       rel="noopener noreferrer"
                       className="text-copper-600 hover:text-copper-800 transition-colors"
                     >
-                      (0414) 145-4086
+                      (0414) 145-40-86
                     </a>
-                    <p className="text-sm text-copper-500 mt-1">Horario de atención: Lunes a Sábado 9:00 AM - 7:00 PM</p>
+                    <p className="text-sm text-copper-500 mt-1">Horario de atención: Lunes a Domingo 10:00 AM - 7:00 PM</p>
                   </div>
                 </div>
 
@@ -109,27 +109,40 @@ export default function AboutUs() {
                   </div>
                 </div>
 
+                <div className="flex items-start mt-6">
+                  <div className="flex-shrink-0 bg-copper-100 p-3 rounded-full">
+                    <svg className="h-6 w-6 text-copper-700" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M12.525.02c1.31-.02 2.61-.01 3.91-.02.08 1.17.63 2.33 1.52 3.14.93.83 2.15 1.25 3.35 1.29v4.1c-1.44-.05-2.89-.35-4.15-.96-.5-.26-.97-.6-1.38-1-.01 2.92.01 5.84-.02 8.75-.08 1.4-.54 2.79-1.35 3.94-1.31 1.92-3.58 3.17-5.91 3.21-1.43.08-2.86-.31-4.08-1.03-2.02-1.19-3.44-3.37-3.65-5.71-.02-.5-.03-1-.01-1.49.18-1.9 1.12-3.72 2.58-4.96 1.66-1.44 3.98-2.13 6.15-1.72.02 1.48-.04 2.96-.04 4.44-.99-.32-2.15-.23-3.02.37-.63.41-1.11 1.04-1.36 1.75-.21.51-.15 1.07-.14 1.61.24 1.64 1.82 3.02 3.5 2.87 1.12-.01 2.19-.66 2.77-1.61.19-.33.4-.67.41-1.06.1-1.79.06-3.57.07-5.36.01-4.03-.01-8.05.02-12.07z" />
+                    </svg>
+                  </div>
+                  <div className="ml-4">
+                    <h3 className="text-lg font-medium text-copper-800">Síguenos en TikTok</h3>
+                    <a 
+                      href="https://www.tiktok.com/@mirraperfumeria.ve" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-copper-600 hover:text-copper-800 transition-colors"
+                    >
+                      @mirraperfumeria.ve
+                    </a>
+                    <p className="text-sm text-copper-500 mt-1">Mira nuestros videos y mantente al día con las últimas tendencias</p>
+                  </div>
+                </div>
+
                 <div className="pt-4 border-t border-copper-100">
                   <h3 className="text-lg font-medium text-copper-800 mb-3">Horario de atención</h3>
                   <ul className="space-y-2">
                     <li className="flex justify-between">
-                      <span className="text-copper-700">Lunes a Viernes:</span>
-                      <span className="text-copper-800 font-medium">9:00 AM - 7:00 PM</span>
+                      <span className="text-copper-700">Lunes a Domingo:</span>
+                      <span className="text-copper-800 font-medium">10:00 AM - 7:00 PM</span>
                     </li>
-                    <li className="flex justify-between">
-                      <span className="text-copper-700">Sábados:</span>
-                      <span className="text-copper-800 font-medium">9:00 AM - 5:00 PM</span>
-                    </li>
-                    <li className="flex justify-between">
-                      <span className="text-copper-700">Domingos:</span>
-                      <span className="text-copper-800 font-medium">Cerrado</span>
-                    </li>
+                    
                   </ul>
                 </div>
               </div>
             </div>
 
-            <div className="bg-gradient-to-r from-copper-600 to-amber-800 p-6 rounded-lg text-white">
+            <div className="bg-gradient-to-r from-copper-600 to-amber-800 p-6 rounded-lg text-black">
               <h2 className="text-2xl font-bold mb-3">¿Por qué elegirnos?</h2>
               <ul className="space-y-2">
                 <li className="flex items-start">
@@ -153,6 +166,7 @@ export default function AboutUs() {
           </div>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }
