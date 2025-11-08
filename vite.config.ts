@@ -26,7 +26,15 @@ export default defineConfig(({ mode }) => ({
       output: {
         manualChunks: {
           react: ["react", "react-dom", "react-router-dom"],
-          vendor: ["@radix-ui/react-*"]
+          // Eliminamos el comodín que causa problemas
+          vendor: [
+            "@radix-ui/react-dialog",
+            "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-label",
+            "@radix-ui/react-slot",
+            "@radix-ui/react-accordion"
+            // Agrega aquí otros componentes de Radix UI que estés usando
+          ]
         }
       }
     }
