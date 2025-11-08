@@ -45,6 +45,9 @@ export default function Productos() {
   const [loading, setLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [alertOpen, setAlertOpen] = useState(false);
   const form = useForm({
@@ -65,6 +68,14 @@ export default function Productos() {
       .catch(() => toast.error("Error al cargar productos"))
       .finally(() => setLoading(false));
   }, []);
+
+  // Inicializa el estado de imagen cuando se abre el dialog (crear/editar)
+  useEffect(() => {
+    if (isOpen) {
+      setSelectedFile(null);
+      setImageUrl(editingProduct?.image_url || null);
+    }
+  }, [isOpen, editingProduct]);
 
   const filteredProducts = productos.filter((product) => {
     const term = searchTerm.toLowerCase();
@@ -94,6 +105,7 @@ export default function Productos() {
         costo: Number.isNaN(costo) ? null : costo,
         precio_venta: Number.isNaN(precio_venta) ? null : precio_venta,
         proveedor_id: Number.isNaN(proveedor_id) ? null : proveedor_id,
+        ...(imageUrl ? { image_url: imageUrl } : {}),
       };
       console.log("Creando/actualizando producto, payload:", payload);
       if (editingProduct) {
@@ -122,6 +134,38 @@ export default function Productos() {
         // no-op
       }
       toast.error(message);
+    }
+  }
+
+  // Sube el archivo al endpoint externo y obtiene publicUrl
+  async function uploadFile(file: File) {
+    setImageUploading(true);
+    try {
+      const token = import.meta.env.VITE_TOKEN_IMAGE_STORAGE || "";
+      const form = new FormData();
+      form.append("file", file);
+
+      const res = await fetch("https://endpoint.icarosoft.com/fileupload", {
+        method: "POST",
+        headers: token ? { Token: token } : undefined,
+        body: form,
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt || "Error subiendo imagen");
+      }
+      const data = await res.json();
+      const publicUrl = data?.content?.publicUrl || data?.content?.publicurl || null;
+      if (!publicUrl) throw new Error("No se recibió publicUrl desde el servidor");
+      setImageUrl(publicUrl);
+      toast.success("Imagen subida correctamente");
+      return publicUrl;
+    } catch (err) {
+      console.error(err);
+      toast.error("Error subiendo imagen");
+      throw err;
+    } finally {
+      setImageUploading(false);
     }
   }
 
@@ -202,6 +246,35 @@ export default function Productos() {
                       <FormLabel>Proveedor ID</FormLabel>
                       <FormControl>
                         <Input type="number" {...form.register("proveedor_id", { valueAsNumber: true })} />
+                      </FormControl>
+                    </FormItem>
+
+                    <FormItem>
+                      <FormLabel>Imagen</FormLabel>
+                      <FormControl>
+                        <div>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={async (e) => {
+                              const f = e.target.files && e.target.files[0];
+                              if (!f) return;
+                              setSelectedFile(f);
+                              try {
+                                await uploadFile(f);
+                              } catch (err) {
+                                // already handled in uploadFile
+                              }
+                            }}
+                          />
+                          <div className="mt-2">
+                            {imageUploading ? (
+                              <div>Subiendo imagen...</div>
+                            ) : (
+                              <img src={imageUrl || (editingProduct && editingProduct.image_url) || '/placeholder-product.jpg'} alt="Preview" className="h-24 object-contain" />
+                            )}
+                          </div>
+                        </div>
                       </FormControl>
                     </FormItem>
 
