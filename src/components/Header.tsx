@@ -36,7 +36,7 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
 
   return (
     <header 
-      className={`sticky top-0 z-50 bg-gradient-to-r from-[#707070]/90 via-[#878787]/90 to-[#a0a0a0]/90 backdrop-blur-sm shadow-lg transition-all duration-300 ${
+      className={`fixed w-full top-0 left-0 z-50 bg-gradient-to-r from-[#707070]/90 via-[#878787]/90 to-[#a0a0a0]/90 backdrop-blur-sm shadow-lg transition-all duration-300 ${
         scrolled ? 'py-1' : 'py-0'
       }`}
     >
@@ -45,11 +45,11 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
           {/* Logo y nombre */}
           <div className="flex items-center space-x-3">
             <Link to="/" className="flex items-center space-x-3">
-              <div className="p-1 bg-white/80 rounded-full shadow-lg ring-2 ring-[#ca9e67] ring-offset-2 backdrop-blur-sm">
+              <div className=" bg-white/80 rounded-full shadow-lg ring-2 ring-[#ca9e67] ring-offset-2 backdrop-blur-sm">
                 <img 
                   src="/logoColor.png" 
                   alt="Mirra Perfumería" 
-                  className="w-10 h-10 md:w-12 md:h-12 rounded-full object-cover" 
+                  className="w-14 h-14 md:w-14 md:h-14 rounded-full object-cover" 
                 />
               </div>
               <div className="hidden sm:block">
