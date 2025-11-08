@@ -47,7 +47,7 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
             <Link to="/" className="flex items-center space-x-3">
               <div className="p-1 bg-white/80 rounded-full shadow-lg ring-2 ring-[#ca9e67] ring-offset-2 backdrop-blur-sm">
                 <img 
-                  src="/logo.png" 
+                  src="/logoColor.png" 
                   alt="Mirra Perfumería" 
                   className="w-10 h-10 md:w-12 md:h-12 rounded-full object-cover" 
                 />
@@ -73,12 +73,34 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
             >
               Nosotros
             </Link>
-            <Link
-              to="#catalog"
-              className="px-4 py-2 text-white/90 hover:text-white font-medium rounded-lg transition-colors"
-            >
-              Productos
-            </Link>
+            <div className="relative group">
+              <button className="px-4 py-2 text-white/90 hover:text-white font-medium rounded-lg transition-colors flex items-center">
+                Productos
+                <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              <div className="absolute left-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 z-50 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200">
+                <Link
+                  to="/categoria/hombre"
+                  className="block px-4 py-2 text-gray-700 hover:bg-gray-100"
+                >
+                  Hombres
+                </Link>
+                <Link
+                  to="/categoria/mujer"
+                  className="block px-4 py-2 text-gray-700 hover:bg-gray-100"
+                >
+                  Mujeres
+                </Link>
+                <Link
+                  to="/categoria/unisex"
+                  className="block px-4 py-2 text-gray-700 hover:bg-gray-100"
+                >
+                  Unisex
+                </Link>
+              </div>
+            </div>
           </nav>
 
           {/* Botones de acción */}
