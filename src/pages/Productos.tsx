@@ -185,102 +185,168 @@ export default function Productos() {
               </Button>
             </DialogTrigger>
 
-            <DialogContent>
+            <DialogContent className="max-w-4xl">
               <DialogHeader>
-                <DialogTitle>Nuevo Producto</DialogTitle>
-                <DialogDescription>Completa los datos para crear un producto</DialogDescription>
+                <DialogTitle>{editingProduct ? 'Editar' : 'Nuevo'} Producto</DialogTitle>
+                <DialogDescription>Completa los datos del producto</DialogDescription>
               </DialogHeader>
 
-              <div>
+              <div className="py-2">
                 <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                    <FormItem>
-                      <FormLabel>Nombre</FormLabel>
-                      <FormControl>
-                        <Input {...form.register("nombre", { required: true })} />
-                      </FormControl>
-                    </FormItem>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Columna Izquierda */}
+                      <div className="space-y-4">
+                        <FormItem>
+                          <FormLabel>Nombre del Producto</FormLabel>
+                          <FormControl>
+                            <Input 
+                              placeholder="Ej: Jabón de Lavanda" 
+                              {...form.register("nombre", { required: true })} 
+                            />
+                          </FormControl>
+                        </FormItem>
 
-                    <FormItem>
-                      <FormLabel>Tipo</FormLabel>
-                      <FormControl>
-                        <select
-                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base md:text-sm"
-                          {...form.register("tipo", { required: true })}
-                        >
-                          <option value="MateriaPrima">MateriaPrima</option>
-                          <option value="ProductoTerminado">ProductoTerminado</option>
-                        </select>
-                      </FormControl>
-                    </FormItem>
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormItem>
+                            <FormLabel>Tipo</FormLabel>
+                            <FormControl>
+                              <select
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                {...form.register("tipo", { required: true })}
+                              >
+                                <option value="MateriaPrima">Materia Prima</option>
+                                <option value="ProductoTerminado">Producto Terminado</option>
+                              </select>
+                            </FormControl>
+                          </FormItem>
 
-                    <FormItem>
-                      <FormLabel>Unidad</FormLabel>
-                      <FormControl>
-                        <Input {...form.register("unidad", { required: true })} />
-                      </FormControl>
-                    </FormItem>
+                          <FormItem>
+                            <FormLabel>Unidad</FormLabel>
+                            <FormControl>
+                              <Input 
+                                placeholder="Ej: unidad, kg, litro" 
+                                {...form.register("unidad", { required: true })} 
+                              />
+                            </FormControl>
+                          </FormItem>
+                        </div>
 
-                    <FormItem>
-                      <FormLabel>Stock</FormLabel>
-                      <FormControl>
-                        <Input type="number" {...form.register("stock", { valueAsNumber: true })} />
-                      </FormControl>
-                    </FormItem>
+                        <div className="grid grid-cols-3 gap-4">
+                          <FormItem>
+                            <FormLabel>Stock</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="number" 
+                                min="0"
+                                {...form.register("stock", { valueAsNumber: true })} 
+                              />
+                            </FormControl>
+                          </FormItem>
 
-                    <FormItem>
-                      <FormLabel>Costo</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" {...form.register("costo", { valueAsNumber: true })} />
-                      </FormControl>
-                    </FormItem>
+                          <FormItem>
+                            <FormLabel>Costo</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="number" 
+                                step="0.01" 
+                                min="0"
+                                placeholder="0.00"
+                                {...form.register("costo", { valueAsNumber: true })} 
+                              />
+                            </FormControl>
+                          </FormItem>
 
-                    <FormItem>
-                      <FormLabel>Precio venta</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" {...form.register("precio_venta", { valueAsNumber: true })} />
-                      </FormControl>
-                    </FormItem>
+                          <FormItem>
+                            <FormLabel>Precio Venta</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="number" 
+                                step="0.01" 
+                                min="0"
+                                placeholder="0.00"
+                                {...form.register("precio_venta", { valueAsNumber: true })} 
+                              />
+                            </FormControl>
+                          </FormItem>
+                        </div>
 
-                    <FormItem>
-                      <FormLabel>Proveedor ID</FormLabel>
-                      <FormControl>
-                        <Input type="number" {...form.register("proveedor_id", { valueAsNumber: true })} />
-                      </FormControl>
-                    </FormItem>
+                        <FormItem>
+                          <FormLabel>Proveedor ID</FormLabel>
+                          <FormControl>
+                            <Input 
+                              type="number" 
+                              placeholder="Opcional"
+                              {...form.register("proveedor_id", { valueAsNumber: true })} 
+                            />
+                          </FormControl>
+                        </FormItem>
+                      </div>
 
-                    <FormItem>
-                      <FormLabel>Imagen</FormLabel>
-                      <FormControl>
-                        <div>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={async (e) => {
-                              const f = e.target.files && e.target.files[0];
-                              if (!f) return;
-                              setSelectedFile(f);
-                              try {
-                                await uploadFile(f);
-                              } catch (err) {
-                                // already handled in uploadFile
-                              }
-                            }}
-                          />
-                          <div className="mt-2">
+                      {/* Columna Derecha - Imagen */}
+                      <div className="space-y-4">
+                        <FormItem>
+                          <FormLabel>Imagen del Producto</FormLabel>
+                          <div className="mt-1 flex flex-col items-center rounded-lg border-2 border-dashed border-gray-300 px-6 pt-5 pb-6">
                             {imageUploading ? (
-                              <div>Subiendo imagen...</div>
+                              <div className="py-8 text-center">
+                                <div className="mx-auto h-12 w-12 animate-spin rounded-full border-b-2 border-gray-900"></div>
+                                <p className="mt-2 text-sm text-gray-600">Subiendo imagen...</p>
+                              </div>
                             ) : (
-                              <img src={imageUrl || (editingProduct && editingProduct.image_url) || '/placeholder-product.jpg'} alt="Preview" className="h-24 object-contain" />
+                              <>
+                                <div className="mb-4 h-48 w-full overflow-hidden rounded-md bg-gray-100">
+                                  <img 
+                                    src={imageUrl || (editingProduct?.image_url) || '/placeholder-product.jpg'} 
+                                    alt="Vista previa" 
+                                    className="h-full w-full object-contain p-2"
+                                  />
+                                </div>
+                                <div className="text-center">
+                                  <div className="mt-2 flex justify-center text-sm text-gray-600">
+                                    <label className="relative cursor-pointer rounded-md bg-white font-medium text-indigo-600 hover:text-indigo-500">
+                                      <span>Subir una imagen</span>
+                                      <input 
+                                        type="file" 
+                                        className="sr-only" 
+                                        accept="image/*"
+                                        onChange={async (e) => {
+                                          const f = e.target.files?.[0];
+                                          if (!f) return;
+                                          setSelectedFile(f);
+                                          try {
+                                            await uploadFile(f);
+                                          } catch (err) {
+                                            // Error manejado en uploadFile
+                                          }
+                                        }}
+                                      />
+                                    </label>
+                                    <p className="pl-1">o arrastra y suelta</p>
+                                  </div>
+                                  <p className="text-xs text-gray-500">PNG, JPG, GIF hasta 5MB</p>
+                                </div>
+                              </>
                             )}
                           </div>
-                        </div>
-                      </FormControl>
-                    </FormItem>
+                        </FormItem>
+                      </div>
+                    </div>
 
-                    <DialogFooter>
-                      <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>Cancelar</Button>
-                      <Button type="submit">Crear</Button>
+                    <DialogFooter className="border-t pt-4">
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        onClick={() => {
+                          setIsOpen(false);
+                          setImageUrl(null);
+                        }}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700">
+                        {editingProduct ? 'Actualizar' : 'Crear'} Producto
+                      </Button>
                     </DialogFooter>
                   </form>
                 </Form>
