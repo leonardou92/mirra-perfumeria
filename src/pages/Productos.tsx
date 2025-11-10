@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { toast } from "sonner";
 import { createProducto, updateProducto } from "@/integrations/api";
+import ImageUpload from "@/components/ImageUpload";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -45,6 +46,7 @@ export default function Productos() {
   const [loading, setLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [alertOpen, setAlertOpen] = useState(false);
   const form = useForm({
@@ -65,6 +67,13 @@ export default function Productos() {
       .catch(() => toast.error("Error al cargar productos"))
       .finally(() => setLoading(false));
   }, []);
+
+  // Initialize image state when dialog opens (create/edit)
+  useEffect(() => {
+    if (isOpen) {
+      setImageUrl(editingProduct?.image_url || null);
+    }
+  }, [isOpen, editingProduct]);
 
   const filteredProducts = productos.filter((product) => {
     const term = searchTerm.toLowerCase();
@@ -94,6 +103,7 @@ export default function Productos() {
         costo: Number.isNaN(costo) ? null : costo,
         precio_venta: Number.isNaN(precio_venta) ? null : precio_venta,
         proveedor_id: Number.isNaN(proveedor_id) ? null : proveedor_id,
+        imagen_url: imageUrl || null, // Changed from image_url to imagen_url to match your API
       };
       console.log("Creando/actualizando producto, payload:", payload);
       if (editingProduct) {
@@ -125,6 +135,11 @@ export default function Productos() {
     }
   }
 
+  // Handle image upload from the ImageUpload component
+  const handleImageUpload = (url: string) => {
+    setImageUrl(url);
+  };
+
   return (
     <Layout>
       <div className="space-y-6">
@@ -141,73 +156,130 @@ export default function Productos() {
               </Button>
             </DialogTrigger>
 
-            <DialogContent>
+            <DialogContent className="max-w-4xl">
               <DialogHeader>
-                <DialogTitle>Nuevo Producto</DialogTitle>
-                <DialogDescription>Completa los datos para crear un producto</DialogDescription>
+                <DialogTitle>{editingProduct ? 'Editar' : 'Nuevo'} Producto</DialogTitle>
+                <DialogDescription>Completa los datos del producto</DialogDescription>
               </DialogHeader>
 
-              <div>
+              <div className="py-2">
                 <Form {...form}>
-                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-                    <FormItem>
-                      <FormLabel>Nombre</FormLabel>
-                      <FormControl>
-                        <Input {...form.register("nombre", { required: true })} />
-                      </FormControl>
-                    </FormItem>
+                  <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Columna Izquierda */}
+                      <div className="space-y-4">
+                        <FormItem>
+                          <FormLabel>Nombre del Producto</FormLabel>
+                          <FormControl>
+                            <Input 
+                              placeholder="Ej: Jabón de Lavanda" 
+                              {...form.register("nombre", { required: true })} 
+                            />
+                          </FormControl>
+                        </FormItem>
 
-                    <FormItem>
-                      <FormLabel>Tipo</FormLabel>
-                      <FormControl>
-                        <select
-                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base md:text-sm"
-                          {...form.register("tipo", { required: true })}
-                        >
-                          <option value="MateriaPrima">MateriaPrima</option>
-                          <option value="ProductoTerminado">ProductoTerminado</option>
-                        </select>
-                      </FormControl>
-                    </FormItem>
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormItem>
+                            <FormLabel>Tipo</FormLabel>
+                            <FormControl>
+                              <select
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                {...form.register("tipo", { required: true })}
+                              >
+                                <option value="MateriaPrima">Materia Prima</option>
+                                <option value="ProductoTerminado">Producto Terminado</option>
+                              </select>
+                            </FormControl>
+                          </FormItem>
 
-                    <FormItem>
-                      <FormLabel>Unidad</FormLabel>
-                      <FormControl>
-                        <Input {...form.register("unidad", { required: true })} />
-                      </FormControl>
-                    </FormItem>
+                          <FormItem>
+                            <FormLabel>Unidad</FormLabel>
+                            <FormControl>
+                              <Input 
+                                placeholder="Ej: unidad, kg, litro" 
+                                {...form.register("unidad", { required: true })} 
+                              />
+                            </FormControl>
+                          </FormItem>
+                        </div>
 
-                    <FormItem>
-                      <FormLabel>Stock</FormLabel>
-                      <FormControl>
-                        <Input type="number" {...form.register("stock", { valueAsNumber: true })} />
-                      </FormControl>
-                    </FormItem>
+                        <div className="grid grid-cols-3 gap-4">
+                          <FormItem>
+                            <FormLabel>Stock</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="number" 
+                                min="0"
+                                {...form.register("stock", { valueAsNumber: true })} 
+                              />
+                            </FormControl>
+                          </FormItem>
 
-                    <FormItem>
-                      <FormLabel>Costo</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" {...form.register("costo", { valueAsNumber: true })} />
-                      </FormControl>
-                    </FormItem>
+                          <FormItem>
+                            <FormLabel>Costo</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="number" 
+                                step="0.01" 
+                                min="0"
+                                placeholder="0.00"
+                                {...form.register("costo", { valueAsNumber: true })} 
+                              />
+                            </FormControl>
+                          </FormItem>
 
-                    <FormItem>
-                      <FormLabel>Precio venta</FormLabel>
-                      <FormControl>
-                        <Input type="number" step="0.01" {...form.register("precio_venta", { valueAsNumber: true })} />
-                      </FormControl>
-                    </FormItem>
+                          <FormItem>
+                            <FormLabel>Precio Venta</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="number" 
+                                step="0.01" 
+                                min="0"
+                                placeholder="0.00"
+                                {...form.register("precio_venta", { valueAsNumber: true })} 
+                              />
+                            </FormControl>
+                          </FormItem>
+                        </div>
 
-                    <FormItem>
-                      <FormLabel>Proveedor ID</FormLabel>
-                      <FormControl>
-                        <Input type="number" {...form.register("proveedor_id", { valueAsNumber: true })} />
-                      </FormControl>
-                    </FormItem>
+                        <FormItem>
+                          <FormLabel>Proveedor ID</FormLabel>
+                          <FormControl>
+                            <Input 
+                              type="number" 
+                              placeholder="Opcional"
+                              {...form.register("proveedor_id", { valueAsNumber: true })} 
+                            />
+                          </FormControl>
+                        </FormItem>
+                      </div>
 
-                    <DialogFooter>
-                      <Button type="button" variant="outline" onClick={() => setIsOpen(false)}>Cancelar</Button>
-                      <Button type="submit">Crear</Button>
+                      {/* Columna Derecha - Imagen */}
+                      <div className="space-y-4">
+                        <FormItem className="col-span-2">
+                          <FormLabel>Imagen del Producto</FormLabel>
+                          <ImageUpload 
+                            onImageUpload={handleImageUpload}
+                            existingImageUrl={editingProduct?.imagen_url}
+                          />
+                        </FormItem>
+                      </div>
+                    </div>
+
+                    <DialogFooter className="border-t pt-4">
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        onClick={() => {
+                          setIsOpen(false);
+                          setImageUrl(null);
+                        }}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700">
+                        {editingProduct ? 'Actualizar' : 'Crear'} Producto
+                      </Button>
                     </DialogFooter>
                   </form>
                 </Form>
