@@ -1,5 +1,5 @@
 import { Home, Package, Users, Warehouse, FlaskConical, ShoppingCart, Building2, CreditCard, Receipt, LogOut } from "lucide-react";
-import { NavLink } from "react-router-dom";
+import { useLocation } from 'react-router-dom';
 import {
   Sidebar,
   SidebarContent,
@@ -20,18 +20,18 @@ import useCart from "@/hooks/use-cart";
 const menuItems = [
   { title: "Dashboard", url: "/dashboard", icon: Home },
   { title: "Productos", url: "/productos", icon: Package },
-  { title: "Proveedores", url: "/proveedores", icon: Users },
   { title: "Almacenes", url: "/almacenes", icon: Warehouse },
   { title: "Fórmulas", url: "/formulas", icon: FlaskConical },
+  { title: "Producción", url: "/produccion", icon: FlaskConical },
   { title: "Pedidos", url: "/pedidos", icon: ShoppingCart },
-  { title: "Contactos", url: "/contactos", icon: Building2 },
-  { title: "Bancos", url: "/bancos", icon: CreditCard },
-  { title: "Pagos", url: "/pagos", icon: Receipt },
+  { title: "Bancos", url: "/bancos", icon: Building2 },
+  { title: "Tasas de cambio", url: "/tasas-cambio", icon: CreditCard },
 ];
 
 export function AppSidebar() {
   const { open } = useSidebar();
   const navigate = useNavigate();
+  const location = useLocation();
   const { logout } = useAuth();
   const { clear: clearCart } = useCart();
 
@@ -74,23 +74,28 @@ export function AppSidebar() {
           <SidebarGroupLabel>Menú Principal</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild>
-                    <NavLink
-                      to={item.url}
-                      className={({ isActive }) =>
-                        isActive
-                          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                          : "hover:bg-sidebar-accent/50"
-                      }
+              {menuItems.map((item) => {
+                const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      onClick={() => navigate(item.url)}
+                      isActive={isActive}
+                      className={`flex items-center gap-3 px-3 py-2 rounded-md transition-colors duration-150 ${isActive ? 'bg-primary-600 text-white' : 'text-sidebar-foreground hover:bg-sidebar-accent/10 hover:text-sidebar-foreground'}`}
+                      title={!open ? item.title : undefined}
                     >
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+                      <span className="flex items-center justify-center w-6 h-6 shrink-0">
+                        {item.title === "Producción" ? (
+                          <i className="fa-solid fa-industry inline-block w-4 h-4" aria-hidden="true" />
+                        ) : (
+                          <item.icon className="h-5 w-5" />
+                        )}
+                      </span>
+                      {open && <span className="flex-1 text-sm font-medium">{item.title}</span>}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

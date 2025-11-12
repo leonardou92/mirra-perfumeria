@@ -1,8 +1,38 @@
 import { X, Minus, Plus, Send, ShoppingBag } from 'lucide-react';
+import { getImageUrl } from '@/lib/utils';
+import { useEffect, useState } from 'react';
+import { getCachedTasaActiva } from '@/integrations/api';
 
+type CartProps = {
+  items: any[];
+  onClose: () => void;
+  onUpdateQuantity: (productId: number, qty: number) => void;
+  onRemove: (productId: number) => void;
+  onCheckout: () => void;
+};
 
 export function Cart({ items, onClose, onUpdateQuantity, onRemove, onCheckout }: CartProps) {
-  const total = items.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const [tasa, setTasa] = useState<any | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const t = await getCachedTasaActiva();
+        if (!mounted) return;
+        setTasa(t);
+      } catch (e) {
+        // ignore
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const total = items.reduce((sum, item) => {
+    const price = Number(item.product.price) || 0;
+    const factor = (tasa && tasa.monto) ? Number(tasa.monto) : 1;
+    return sum + price * factor * item.quantity;
+  }, 0);
 
   if (items.length === 0) {
     return (
@@ -58,17 +88,19 @@ export function Cart({ items, onClose, onUpdateQuantity, onRemove, onCheckout }:
               className="bg-white rounded-lg p-4 flex space-x-4 border border-cream-300 shadow-sm"
             >
               <img
-                src={item.product.image_url}
+                src={getImageUrl(item.product) || '/placeholder-product.jpg'}
                 alt={item.product.name}
                 className="w-20 h-20 object-cover rounded-lg"
               />
 
-              <div className="flex-1">
+                <div className="flex-1">
                 <h3 className="font-semibold text-copper-800 mb-1">{item.product.name}</h3>
                 <p className="text-sm text-copper-600 mb-2">{item.product.brand}</p>
-                <p className="text-lg font-bold text-copper-800">
-                  ${item.product.price.toLocaleString('es-AR')}
-                </p>
+                {tasa && tasa.monto ? (
+                  <p className="text-lg font-bold text-copper-800">{(tasa.simbolo || 'USD')} {Number(item.product.price * Number(tasa.monto)).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                ) : (
+                  <p className="text-lg font-bold text-copper-800">{Number(item.product.price).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                )}
               </div>
 
               <div className="flex flex-col justify-between items-end">
@@ -106,7 +138,7 @@ export function Cart({ items, onClose, onUpdateQuantity, onRemove, onCheckout }:
           <div className="flex justify-between items-center mb-4">
             <span className="text-lg font-semibold text-copper-700">Total:</span>
             <span className="text-3xl font-bold text-copper-800">
-              ${total.toLocaleString('es-AR')}
+              {tasa && tasa.monto ? (`${tasa.simbolo || 'USD'} ${Number(total).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`) : (Number(total).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}
             </span>
           </div>
 

@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Star } from 'lucide-react';
 import { Product } from '@/lib/types';
+import { getImageUrl } from '@/lib/utils';
+import { getCachedTasaActiva } from '@/integrations/api';
 import ProductModal from './ProductModal';
 
 interface ProductCardProps {
@@ -10,19 +12,36 @@ interface ProductCardProps {
 
 export function ProductCard({ product, onAddToCart }: ProductCardProps) {
   const [open, setOpen] = useState(false);
+  const [tasa, setTasa] = useState<any | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const t = await getCachedTasaActiva();
+        if (!mounted) return;
+        setTasa(t);
+      } catch (e) {
+        // ignore
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   return (
     <>
       <article className="bg-cream-100 rounded-lg overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 border border-cream-200">
-        <div className="relative overflow-hidden h-56 sm:h-48">
+            <div className="relative overflow-hidden h-56 sm:h-48">
           <button onClick={() => setOpen(true)} className="w-full h-full p-0 m-0 block">
             <img
-              src={product.image_url || '/placeholder-product.jpg'}
+              src={getImageUrl(product) || '/placeholder-product.jpg'}
               alt={product.name}
               loading="lazy"
+              onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = '/placeholder-product.jpg'; console.error('[ProductCard] image load failed:', t.src); }}
               className="w-full h-full object-cover bg-neutral-100 transform group-hover:scale-105 transition-transform duration-700"
             />
           </button>
+          {/* badge de URL en dev removido - UI limpia */}
 
           {product.featured && (
             <span className="absolute top-3 right-3 bg-copper-600 text-cream-50 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-2 shadow">
@@ -44,7 +63,13 @@ export function ProductCard({ product, onAddToCart }: ProductCardProps) {
           <div className="flex items-center justify-between pt-3 border-t border-cream-200">
             <div>
               {product.price && Number(product.price) > 0 ? (
-                <p className="text-2xl font-bold text-copper-800">${Number(product.price).toLocaleString('es-AR')}</p>
+                <div>
+                  {tasa && tasa.monto ? (
+                    <p className="text-2xl font-bold text-copper-800">{(tasa.simbolo || 'USD')} {(Number(product.price) * Number(tasa.monto)).toFixed(2)}</p>
+                  ) : (
+                    <p className="text-2xl font-bold text-copper-800">${Number(product.price).toLocaleString('es-AR')}</p>
+                  )}
+                </div>
               ) : (
                 <p className="text-sm font-semibold text-copper-700">Consultar precio</p>
               )}

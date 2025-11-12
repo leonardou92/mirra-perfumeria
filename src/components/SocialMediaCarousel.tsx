@@ -3,8 +3,11 @@ import Slider from 'react-slick';
 import 'slick-carousel/slick/slick.css';
 import 'slick-carousel/slick/slick-theme.css';
 import { Product } from '@/lib/types';
+import { getImageUrl } from '@/lib/utils';
 import { useCart } from '@/hooks/use-cart';
 import { toast } from 'sonner';
+import { useEffect, useState } from 'react';
+import { getCachedTasaActiva } from '@/integrations/api';
 
 interface ProductCarouselProps {
   products: Product[];
@@ -13,6 +16,19 @@ interface ProductCarouselProps {
 
 const ProductCarousel: React.FC<ProductCarouselProps> = ({ products, isMobile = false }) => {
   const { addItem } = useCart();
+  const [tasa, setTasa] = useState<any | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const t = await getCachedTasaActiva();
+        if (!mounted) return;
+        setTasa(t);
+      } catch (e) {}
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   // Si es móvil, no renderizamos el carrusel
   if (isMobile) return null;
@@ -79,7 +95,7 @@ const ProductCarousel: React.FC<ProductCarouselProps> = ({ products, isMobile = 
               <div className="bg-white rounded-lg overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 h-full flex flex-col">
                 <div className="relative pt-[100%] overflow-hidden">
                   <img 
-                    src={product.image_url || '/placeholder-product.jpg'} 
+                    src={getImageUrl(product) || '/placeholder-product.jpg'} 
                     alt={product.name} 
                     className="absolute top-0 left-0 w-full h-full object-cover transition-transform duration-500 hover:scale-105"
                     onError={(e) => {
@@ -90,7 +106,11 @@ const ProductCarousel: React.FC<ProductCarouselProps> = ({ products, isMobile = 
                 </div>
                 <div className="p-4 flex-1 flex flex-col">
                   <h3 className="text-lg font-semibold text-copper-900 mb-1 line-clamp-2">{product.name}</h3>
-                  <p className="text-amber-800 font-bold text-lg mb-4">${product.price.toLocaleString('es-AR')}</p>
+                  {tasa && tasa.monto ? (
+                    <p className="text-amber-800 font-bold text-lg mb-4">{(tasa.simbolo || 'USD')} {(Number(product.price) * Number(tasa.monto)).toFixed(2)}</p>
+                  ) : (
+                    <p className="text-amber-800 font-bold text-lg mb-4">${product.price.toLocaleString('es-AR')}</p>
+                  )}
                   <button
                     onClick={() => handleAddToCart(product)}
                     className="mt-auto w-full bg-copper-600 text-white py-2 px-4 rounded-md hover:bg-copper-700 transition-colors"
