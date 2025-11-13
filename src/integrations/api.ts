@@ -146,6 +146,28 @@ export async function createFormaPago(data: any) {
   return apiFetch("/formas-pago", { method: "POST", body: JSON.stringify(data) });
 }
 
+// Categorías (CRUD)
+export async function getCategorias() {
+  return apiFetch('/categorias');
+}
+
+export async function getCategoria(id: number) {
+  return apiFetch(`/categorias/${id}`);
+}
+
+export async function createCategoria(data: { nombre: string; descripcion?: string }) {
+  return apiFetch('/categorias', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateCategoria(id: number, data: { nombre?: string; descripcion?: string }) {
+  return apiFetch(`/categorias/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function deleteCategoria(id: number) {
+  return apiFetch(`/categorias/${id}`, { method: 'DELETE' });
+}
+
+
 // Cliente-Bancos
 export async function getClienteBancos() {
   return apiFetch("/cliente-bancos");

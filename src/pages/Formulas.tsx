@@ -132,7 +132,7 @@ export default function Formulas() {
   }
 
   // Construir set de ids de almacenes marcados como materia prima
-  const materiaAlmacenIds = new Set<number>((almacenes || []).filter((a: any) => a.es_materia_prima || a.tipo === 'MateriaPrima').map((a: any) => a.id));
+  const materiaAlmacenIds = new Set<number>((almacenes || []).filter((a: any) => a.es_materia_prima || String(a.tipo).toLowerCase() === 'interno').map((a: any) => a.id));
 
   // Helper para determinar si un producto debe considerarse materia prima.
   // Reglas (en orden):

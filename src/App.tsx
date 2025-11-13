@@ -17,6 +17,7 @@ import Bancos from "./pages/Bancos";
 import Pagos from "./pages/Pagos";
 import AboutUs from "./pages/AboutUs";
 import Almacenes from "./pages/Almacenes";
+import Categorias from "./pages/Categorias";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -46,6 +47,7 @@ const App = () => (
             <Route path="/tasas-cambio" element={<TasasCambio />} />
             <Route path="/contactos" element={<Contactos />} />
             <Route path="/bancos" element={<Bancos />} />
+            <Route path="/categorias" element={<Categorias />} />
             <Route path="/pagos" element={<Pagos />} />
           </Route>
           

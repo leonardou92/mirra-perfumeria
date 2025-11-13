@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Menu, X } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+import CategoryMenu from '@/components/CategoryMenu';
 
 interface HeaderProps {
   cartItemsCount: number;
@@ -107,6 +108,10 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
                 </Link>
               </div>
             </div>
+            {/* Selector / CRUD de categorías */}
+            <div className="flex items-center">
+              <CategoryMenu />
+            </div>
           </nav>
 
           {/* Botones de acción */}
@@ -174,6 +179,10 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
           >
             Nuestros Productos
           </Link>
+          {/* CategoryMenu en móvil */}
+          <div className="block px-4 py-3">
+            <CategoryMenu />
+          </div>
           <Link
             to="/"
             className="block px-4 py-3 text-center bg-[#CA9E67] text-white rounded-lg font-medium hover:bg-[#b58a53] transition-colors mt-2"
