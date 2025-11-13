@@ -3,6 +3,26 @@ import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch } from '../integrations/api';
+// helpers
+const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+function extractMonedaFromDetalles(detalles: any) {
+  if (!detalles) return null;
+  try {
+    if (typeof detalles === 'string') {
+      try { const parsed = JSON.parse(detalles); if (parsed?.moneda) return parsed.moneda; if (parsed?.simbolo) return parsed.simbolo; if (parsed?.symbol) return parsed.symbol; } catch (e) { /* not json */ }
+      // fallback: use raw string if looks like a currency code
+      return detalles;
+    }
+    if (typeof detalles === 'object') {
+      return detalles?.moneda ?? detalles?.simbolo ?? detalles?.symbol ?? null;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+
+}
+
 
 type Forma = { id: number; nombre: string; detalles?: any };
 type Banco = { id: number; nombre: string; formas_pago?: Forma[] };
@@ -513,16 +533,59 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     }
 
     // calcular equivalencia usando la tasa actual (monto / tasa.monto)
+    // calcular equivalencia usando la tasa actual (monto / tasa.monto)
     try {
-      const t = tasa && typeof tasa.monto === 'number' ? Number(tasa.monto) : (tasa && tasa.monto ? Number(String(tasa.monto).replace(',', '.')) : NaN);
+      // Priorizar moneda definida en la forma (detalles), luego resolvedMoneda (UI), luego banco
+      const formaSel = availableFormas.find((f) => Number(f.id) === Number(selectedFormaId));
+      let monedaDetected = extractMonedaFromDetalles(formaSel?.detalles) || null;
+      if (!monedaDetected && resolvedMoneda) {
+        monedaDetected = resolvedMoneda;
+      }
+      if (!monedaDetected && selectedBancoId) {
+        const bancoObj = bancos.find((b) => b.id === selectedBancoId) as any | undefined;
+        monedaDetected = bancoObj?.moneda ?? bancoObj?.currency ?? null;
+      }
+      const monedaClean = normalizeSymbol(monedaDetected);
+      // intentar obtener tasa por símbolo detectado
+      let tasaObj: any = null;
+      if (monedaClean) {
+        try { tasaObj = await getTasaBySimbolo(monedaClean); } catch (e) { tasaObj = null; }
+      }
+      // Preferir la tasa seleccionada en el UI (`tasa`) cuando esté disponible, sino usar la tasa detectada por símbolo
+      const t = (tasa && Number.isFinite(Number(tasa.monto))) ? Number(tasa.monto) : (tasaObj && Number.isFinite(Number(tasaObj.monto)) ? Number(tasaObj.monto) : (tasa && tasa.monto ? Number(String(tasa.monto).replace(',', '.')) : NaN));
       const m = Number(String(pago.monto || '').replace(',', '.'));
       if (Number.isFinite(m) && Number.isFinite(t) && t !== 0) {
         pago.equivalencia = Number((m / t).toFixed(2));
       } else {
         pago.equivalencia = null;
       }
-    } catch (err) {
-      pago.equivalencia = null;
+      // adjuntar tasa y simbolo detectados
+      pago.tasa = tasaObj?.monto ? Number(tasaObj.monto) : (tasa && tasa.monto ? Number(tasa.monto) : pago.tasa ?? null);
+      pago.tasa_simbolo = normalizeSymbol(tasaObj?.simbolo ?? tasa?.simbolo ?? monedaClean ?? null);
+      if (pago.tasa !== null && pago.tasa !== undefined) pago.tasa_monto = pago.tasa;
+      pago.moneda = monedaClean;
+    // Adjuntar información de tasa usada para este pago (importante: enviar al backend)
+    try {
+      const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+      pago.tasa = tasa && (typeof tasa.monto === 'number' ? Number(tasa.monto) : (tasa?.monto ? Number(String(tasa.monto).replace(',', '.')) : null));
+      pago.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? null);
+      // compatibilidad con campos alternativos que el backend pueda leer
+      if (pago.tasa !== null && pago.tasa !== undefined) pago.tasa_monto = pago.tasa;
+    } catch (e) {
+      // ignore
+    }
+  } catch (e) {
+    // ignore outer computation errors
+  }
+    try {
+      // Añadir la moneda detectada para este pago (si aún no está definida).
+      // No sobrescribir una moneda ya determinada arriba (priorizamos detalles/resolvedMoneda).
+      if (!pago.moneda) {
+        const bancoObj = bancos.find((b) => b.id === selectedBancoId) as any | undefined;
+        pago.moneda = bancoObj?.moneda ? String(bancoObj.moneda).toUpperCase().replace(/[^A-Z0-9]/g, '') : (resolvedMoneda ? String(resolvedMoneda).toUpperCase().replace(/[^A-Z0-9]/g, '') : null);
+      }
+    } catch (e) {
+      // ignore
     }
 
   // persistir nombre de forma y banco para evitar confusiones si el usuario cambia selección luego
@@ -613,6 +676,18 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
           if (p?.existing || p?.id) continue;
           // asegurar client_uid en el body para idempotencia server-side
           const body = { ...p, pedido_venta_id: pedidoId, client_uid: p.client_uid ?? makeClientUid() };
+          // Asegurar que el body incluye la tasa y símbolo correctos para este pago
+          try {
+            if (body.tasa === undefined || body.tasa === null) {
+              body.tasa = p.tasa ?? (tasa && typeof tasa.monto === 'number' ? Number(tasa.monto) : (tasa?.monto ? Number(String(tasa.monto).replace(',', '.')) : null));
+            }
+            if (!body.tasa_simbolo) {
+              body.tasa_simbolo = p.tasa_simbolo ?? tasa?.simbolo ?? resolvedMoneda ?? null;
+            }
+            if (body.tasa !== undefined && body.tasa !== null && body.tasa_monto === undefined) body.tasa_monto = body.tasa;
+          } catch (e) {
+            // ignore
+          }
           // comprobar tasa para el banco del pago antes de crear
           if (body.banco_id) {
             const ok = await checkTasaForBanco(body.banco_id);
@@ -625,6 +700,70 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
             // Debug: log payload sent for pago (incluye client_uid)
             // eslint-disable-next-line no-console
             console.debug('create-pago-payload', body);
+            // Final body normalization: asegurarnos que tasa_simbolo sea un código limpio
+            const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+            // Prefer symbol explicitly declared in the forma de pago details -> then banco -> then UI tasa
+            try {
+              let symbolFromFormaOrBanco: string | null = null;
+              try {
+                const formaForBody = availableFormas.find((f) => Number(f.id) === Number(body.forma_pago_id));
+                symbolFromFormaOrBanco = extractMonedaFromDetalles(formaForBody?.detalles) || null;
+              } catch (e) {
+                /* ignore */
+              }
+              if (!symbolFromFormaOrBanco) {
+                try {
+                  const bancoForBody = bancos.find((b) => b.id === body.banco_id) as any | undefined;
+                  symbolFromFormaOrBanco = bancoForBody?.moneda ?? bancoForBody?.currency ?? null;
+                } catch (e) { /* ignore */ }
+              }
+              if (symbolFromFormaOrBanco) {
+                const symClean = normalizeSymbol(symbolFromFormaOrBanco);
+                const tasaObjForSym = await getTasaBySimbolo(symClean as string);
+                if (tasaObjForSym && Number.isFinite(Number(tasaObjForSym.monto))) {
+                  const n = Number(tasaObjForSym.monto);
+                  body.tasa = n;
+                  body.tasa_monto = n;
+                  body.tasa_simbolo = normalizeSymbol(tasaObjForSym.simbolo ?? symClean ?? null);
+                } else {
+                  // fallback to UI tasa if available
+                  if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                    const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                    body.tasa = tasaVal;
+                    body.tasa_monto = tasaVal;
+                    body.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? body.tasa_simbolo ?? null);
+                  } else {
+                    body.tasa_simbolo = normalizeSymbol(body.tasa_simbolo ?? body.tasa?.simbolo ?? body.tasa ?? null);
+                  }
+                }
+              } else {
+                // No symbol from forma/banco: prefer UI tasa if present
+                if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                  const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                  body.tasa = tasaVal;
+                  body.tasa_monto = tasaVal;
+                  body.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? body.tasa_simbolo ?? null);
+                } else {
+                  body.tasa_simbolo = normalizeSymbol(body.tasa_simbolo ?? body.tasa?.simbolo ?? body.tasa ?? null);
+                }
+              }
+            } catch (e) {
+              // ignore normalization errors and keep existing values
+              body.tasa_simbolo = normalizeSymbol(body.tasa_simbolo ?? body.tasa?.simbolo ?? body.tasa ?? null);
+            }
+            // Añadir moneda explícita si falta
+            try {
+              const bancoForBody = bancos.find((b) => b.id === body.banco_id) as any | undefined;
+              body.moneda = body.moneda ?? (bancoForBody?.moneda ? String(bancoForBody.moneda).toUpperCase().replace(/[^A-Z0-9]/g, '') : (body.tasa_simbolo ?? null));
+            } catch (e) { /* ignore */ }
+            // Forzar que el body use los IDs seleccionados en UI para evitar enviar valores erróneos
+            try {
+              body.forma_pago_id = Number(body.forma_pago_id) || Number(p.forma_pago_id) || Number(selectedFormaId) || body.forma_pago_id;
+              body.banco_id = body.banco_id ?? p.banco_id ?? selectedBancoId ?? body.banco_id;
+            } catch (e) { /* ignore */ }
+            // Mostrar body final que se enviará
+            // eslint-disable-next-line no-console
+            console.debug('create-pago-final-body', body);
             // Evitar crear pagos idénticos si ya hay uno en vuelo
             const key = JSON.stringify(body);
             if (inFlightCreates.current.has(key)) {
@@ -676,9 +815,8 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
           const fresh = await getPedidoVenta(pedidoId);
           const pagosList = Array.isArray(fresh?.pagos) ? fresh.pagos : (Array.isArray(fresh?.pagos_venta) ? fresh.pagos_venta : (Array.isArray(fresh?.payments) ? fresh.payments : []));
           if (createdCount > 0 && (!pagosList || pagosList.length === 0)) {
-            // Mostrar aviso y registrar detalle para diagnóstico
-            console.error('pedido-finalizado-sin-pagos-detectados', { createdCount, createdPayments, fresh });
-            setErrors('Pedido completado pero no se detectaron pagos asociados. Revisa logs o la respuesta del servidor.');
+            // No hay pagos detectados tras completar; notificar al usuario sin log ruidoso
+            setErrors('Pedido completado pero no se detectaron pagos asociados. Revisa la respuesta del servidor.');
             toast.error('Pedido completado pero no se detectaron pagos asociados');
             if (onSuccess) onSuccess(fresh);
             if (onClose) onClose();
@@ -715,14 +853,73 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
           payload.pago.fecha_transaccion = new Date().toISOString();
         }
 
+        // asegurarnos de incluir client_uid y tasa en el pago enviado
+        try {
+          payload.pago.client_uid = payload.pago.client_uid ?? makeClientUid();
+          // Prefer symbol declared in the forma de pago details, then banco, then UI `tasa`.
+          try {
+            const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+            let symbolFromFormaOrBanco: string | null = null;
+            try {
+              const formaSel = availableFormas.find((f) => Number(f.id) === Number(selectedFormaId));
+              symbolFromFormaOrBanco = extractMonedaFromDetalles(formaSel?.detalles) || null;
+            } catch (e) {}
+            if (!symbolFromFormaOrBanco && selectedBancoId) {
+              try {
+                const bancoForPayload = bancos.find((b) => b.id === selectedBancoId) as any | undefined;
+                symbolFromFormaOrBanco = bancoForPayload?.moneda ?? bancoForPayload?.currency ?? null;
+              } catch (e) {}
+            }
+            if (symbolFromFormaOrBanco) {
+              const symClean = normalizeSymbol(symbolFromFormaOrBanco);
+              const tasaObjForSym = await getTasaBySimbolo(symClean as string);
+              if (tasaObjForSym && Number.isFinite(Number(tasaObjForSym.monto))) {
+                const n = Number(tasaObjForSym.monto);
+                payload.pago.tasa = n;
+                payload.pago.tasa_monto = n;
+                payload.pago.tasa_simbolo = normalizeSymbol(tasaObjForSym.simbolo ?? symClean ?? null);
+              } else {
+                // fallback to UI tasa
+                if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                  const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                  payload.pago.tasa = tasaVal;
+                  payload.pago.tasa_monto = tasaVal;
+                  payload.pago.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? payload.pago.tasa_simbolo ?? null);
+                }
+              }
+            } else {
+              if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                payload.pago.tasa = tasaVal;
+                payload.pago.tasa_monto = tasaVal;
+                payload.pago.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? payload.pago.tasa_simbolo ?? null);
+              }
+            }
+          } catch (e) {
+            // noop
+          }
+          // añadir moneda explícita basada en banco si no está presente
+          try {
+            const bancoForPayload = bancos.find((b) => b.id === payload.pago.banco_id) as any | undefined;
+            payload.pago.moneda = payload.pago.moneda ?? (bancoForPayload?.moneda ? String(bancoForPayload.moneda).toUpperCase().replace(/[^A-Z0-9]/g, '') : payload.pago.tasa_simbolo ?? null);
+          } catch (e) { /* ignore */ }
+        } catch (e) { /* ignore */ }
+        // Asegurar que usamos la forma/banco seleccionados para el pago único
+        try {
+          payload.pago.forma_pago_id = Number(payload.pago.forma_pago_id) || Number(selectedFormaId) || payload.pago.forma_pago_id;
+          payload.pago.banco_id = payload.pago.banco_id ?? selectedBancoId ?? payload.pago.banco_id;
+        } catch (e) { /* ignore */ }
+        // debug final del pago que se enviará en el completar
+        // eslint-disable-next-line no-console
+        console.debug('create-pago-final-single', payload.pago);
+
         const data = await completarPedidoVenta(pedidoId, payload.pago);
         // Verificar que el pago quedó asociado
         try {
           const fresh = await getPedidoVenta(pedidoId);
           const pagosList = Array.isArray(fresh?.pagos) ? fresh.pagos : (Array.isArray(fresh?.pagos_venta) ? fresh.pagos_venta : (Array.isArray(fresh?.payments) ? fresh.payments : []));
           if (!pagosList || pagosList.length === 0) {
-            console.error('pago-finalizar-sin-asociacion', { payload, fresh });
-            setErrors('Pago registrado pero no se detectó asociación al pedido. Revisa logs.');
+            setErrors('Pago registrado pero no se detectó asociación al pedido. Revisa la respuesta del servidor.');
             toast.error('Pago registrado pero no se detectó asociación al pedido');
             if (onSuccess) onSuccess(fresh);
             if (onClose) onClose();
@@ -836,12 +1033,64 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         pago.fecha_transaccion = new Date().toISOString();
       }
 
-      try {
-        // comprobar tasa del banco antes de enviar
-        if (pago.banco_id) {
-          const ok = await checkTasaForBanco(pago.banco_id);
-          if (!ok) { setLoading(false); return; }
-        }
+          try {
+            // comprobar tasa del banco antes de enviar
+            if (pago.banco_id) {
+              const ok = await checkTasaForBanco(pago.banco_id);
+              if (!ok) { setLoading(false); return; }
+            }
+          // Asegurar que el pago que vamos a enviar contiene client_uid y la tasa correcta
+          try {
+            pago.client_uid = pago.client_uid ?? makeClientUid();
+            // Prefer symbol declared in the forma de pago details, then banco, then UI `tasa`.
+            try {
+              const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+              let symbolFromFormaOrBanco: string | null = null;
+              try {
+                const formaSel = availableFormas.find((f) => Number(f.id) === Number(pago.forma_pago_id));
+                symbolFromFormaOrBanco = extractMonedaFromDetalles(formaSel?.detalles) || null;
+              } catch (e) {}
+              if (!symbolFromFormaOrBanco && pago.banco_id) {
+                try {
+                  const bancoForP = bancos.find((b) => b.id === pago.banco_id) as any | undefined;
+                  symbolFromFormaOrBanco = bancoForP?.moneda ?? bancoForP?.currency ?? null;
+                } catch (e) {}
+              }
+              if (symbolFromFormaOrBanco) {
+                const symClean = normalizeSymbol(symbolFromFormaOrBanco);
+                const tasaObjForSym = await getTasaBySimbolo(symClean as string);
+                if (tasaObjForSym && Number.isFinite(Number(tasaObjForSym.monto))) {
+                  const n = Number(tasaObjForSym.monto);
+                  pago.tasa = n;
+                  pago.tasa_monto = n;
+                  pago.tasa_simbolo = normalizeSymbol(tasaObjForSym.simbolo ?? symClean ?? null);
+                } else {
+                  if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                    const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                    pago.tasa = pago.tasa ?? tasaVal;
+                    pago.tasa_monto = pago.tasa ?? tasaVal;
+                    pago.tasa_simbolo = normalizeSymbol(pago.tasa_simbolo ?? tasa?.simbolo ?? resolvedMoneda ?? null);
+                  }
+                }
+              } else {
+                if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                  const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                  pago.tasa = pago.tasa ?? tasaVal;
+                  pago.tasa_monto = pago.tasa ?? tasaVal;
+                  pago.tasa_simbolo = normalizeSymbol(pago.tasa_simbolo ?? tasa?.simbolo ?? resolvedMoneda ?? null);
+                }
+              }
+            } catch (e) { /* ignore */ }
+          } catch (e) { /* ignore */ }
+        // Forzar uso de la forma/banco seleccionados antes de enviar en add-and-complete
+        try {
+          pago.forma_pago_id = Number(pago.forma_pago_id) || Number(selectedFormaId) || pago.forma_pago_id;
+          pago.banco_id = pago.banco_id ?? selectedBancoId ?? pago.banco_id;
+        } catch (e) { /* ignore */ }
+        // debug final del pago que se enviará en add-and-complete
+        // eslint-disable-next-line no-console
+        console.debug('create-pago-final-add-and-complete', pago);
+
         // Enviar en un solo paso: crear y completar el pedido (backend debe soportar crear+finalizar)
         // Esto evita duplicados al crear el pago por separado y luego completar.
         const data = await completarPedidoVenta(pedidoId, pago);
@@ -850,7 +1099,6 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
           const fresh = await getPedidoVenta(pedidoId);
           const pagosList = Array.isArray(fresh?.pagos) ? fresh.pagos : (Array.isArray(fresh?.pagos_venta) ? fresh.pagos_venta : (Array.isArray(fresh?.payments) ? fresh.payments : []));
           if (!pagosList || pagosList.length === 0) {
-            console.error('add-and-complete-no-pagos-detected', { pago, fresh });
             setErrors('Pago registrado pero no se detectó asociación al pedido. Revisa la respuesta del servidor.');
             toast.error('Pago registrado pero no se detectó asociación al pedido');
             if (onSuccess) onSuccess(fresh);

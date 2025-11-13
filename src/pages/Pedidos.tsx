@@ -764,6 +764,41 @@ export default function Pedidos() {
                                 try {
                                   // asegurar client_uid en payload para idempotencia backend
                                   payload.client_uid = payload.client_uid ?? makeClientUid();
+                                  // Adjuntar tasa/moneda detectada para este banco/forma si está disponible
+                                  try {
+                                    let monedaDetected: string | null = null;
+                                    // Priorizar moneda indicada en la forma de pago (directFormas[].detalles)
+                                    try {
+                                      const formaObj = directFormas.find((f: any) => Number(f.id) === Number(directFormaId));
+                                      const detalles = formaObj?.detalles ?? null;
+                                      if (detalles) {
+                                        if (typeof detalles === 'string') {
+                                          try { const parsed = JSON.parse(detalles); monedaDetected = parsed?.moneda ?? parsed?.simbolo ?? parsed?.symbol ?? detalles; } catch (e) { monedaDetected = detalles; }
+                                        } else if (typeof detalles === 'object') {
+                                          monedaDetected = detalles?.moneda ?? detalles?.simbolo ?? detalles?.symbol ?? null;
+                                        }
+                                      }
+                                    } catch (e) { /* ignore */ }
+                                    // Si no hay moneda en la forma, fallback a la del banco
+                                    if (!monedaDetected && payload.banco_id) {
+                                      const banco = directBancos.find((b: any) => Number(b.id) === Number(payload.banco_id));
+                                      monedaDetected = banco?.moneda ?? banco?.currency ?? null;
+                                    }
+                                    // fallback a moneda del pedido
+                                    if (!monedaDetected && selectedPedido) {
+                                      monedaDetected = selectedPedido?.tasa_simbolo ?? selectedPedido?.tasa?.simbolo ?? null;
+                                    }
+                                    if (monedaDetected) {
+                                      const clean = String(monedaDetected).toUpperCase().replace(/[^A-Z0-9]/g, '') || null;
+                                      payload.moneda = clean;
+                                      const tobj = await getTasaBySimbolo(clean);
+                                      if (tobj && Number.isFinite(Number(tobj.monto))) {
+                                        payload.tasa = Number(tobj.monto);
+                                        payload.tasa_simbolo = clean;
+                                        payload.tasa_monto = Number(tobj.monto);
+                                      }
+                                    }
+                                  } catch (e) { /* ignore */ }
                                   // Log payload to console for debugging
                                   // eslint-disable-next-line no-console
                                   console.debug('create-pago-payload', payload);

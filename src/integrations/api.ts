@@ -349,6 +349,14 @@ export async function deleteTasaCambio(id: number) {
 // Ahora acepta opcionalmente un objeto { pago: { ... } } en el body para registrar el pago
 export async function completarPedidoVenta(id: number, pago?: any) {
   const body = pago ? { pago } : undefined;
+  try {
+    // Log exact payload that will be sent to the backend for diagnosis
+    // Esto facilita verificar en la consola del navegador si la tasa/símbolo vienen desde el frontend
+    // eslint-disable-next-line no-console
+    console.debug('api.completarPedidoVenta.request', { id, body });
+  } catch (e) {
+    // noop
+  }
   return apiFetch(`/pedidos-venta/${id}/completar`, { method: 'POST', body: body ? JSON.stringify(body) : undefined });
 }
 
