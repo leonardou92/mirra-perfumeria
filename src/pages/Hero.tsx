@@ -46,7 +46,7 @@ export default function Hero() {
         const normalize = (item: any): Product => ({
           id: item.id ?? item.producto_id ?? 0,
           name: item.name ?? item.nombre ?? '',
-          image_url: item.image_url ?? item.imagen ?? item.image ?? '/placeholder-product.jpg',
+          image_url: item.image_url ?? item.imagen ?? item.image ?? undefined,
           featured: Boolean(item.featured ?? item.destacado ?? (item.is_featured === 1)),
           brand: item.brand ?? item.marca ?? '',
           category: item.category ?? item.categoria ?? item.tipo ?? '',
@@ -258,7 +258,7 @@ export default function Hero() {
                   return (
                     <div key={it.product.id} className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <img src={getImageUrl(it.product) || '/placeholder-product.jpg'} alt={it.product.name} className="w-14 h-14 object-cover rounded" />
+                        <img src={getImageUrl(it.product)} alt={it.product.name} className="w-14 h-14 object-cover rounded" onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; }} />
                         <div>
                           <div className="font-medium text-copper-800">{it.product.name}</div>
                           <div className="text-sm text-copper-600">{priceDisplay}</div>

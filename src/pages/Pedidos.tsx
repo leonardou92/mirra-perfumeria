@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos } from "@/integrations/api";
 import PaymentByBank from '@/components/PaymentByBank';
-import { parseApiError } from '@/lib/utils';
+import { parseApiError, getImageUrl } from '@/lib/utils';
 import { Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -565,7 +565,7 @@ export default function Pedidos() {
                           <tr key={it.id} className="border-t">
                             <td className="py-2 w-16">
                               <div className="w-12 h-12 rounded overflow-hidden bg-gray-100">
-                                <img src={it.image_url || it.image || ''} alt={it.producto_nombre || ''} className="w-full h-full object-cover" />
+                                <img src={getImageUrl(it)} alt={it.producto_nombre || ''} className="w-full h-full object-cover" onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; }} />
                               </div>
                             </td>
                             <td className="py-2">{it.producto_nombre || it.nombre || '-'}</td>

@@ -34,10 +34,10 @@ export function ProductCard({ product, onAddToCart }: ProductCardProps) {
             <div className="relative overflow-hidden h-56 sm:h-48">
           <button onClick={() => setOpen(true)} className="w-full h-full p-0 m-0 block">
             <img
-              src={getImageUrl(product) || '/placeholder-product.jpg'}
+              src={getImageUrl(product)}
               alt={product.name}
               loading="lazy"
-              onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = '/placeholder-product.jpg'; console.error('[ProductCard] image load failed:', t.src); }}
+              onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; console.error('[ProductCard] image load failed:', t.src); }}
               className="w-full h-full object-cover bg-neutral-100 transform group-hover:scale-105 transition-transform duration-700"
             />
           </button>

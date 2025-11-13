@@ -8,8 +8,9 @@ export function cn(...inputs: ClassValue[]) {
 // Devuelve la mejor URL de imagen disponible en un objeto producto/interno
 export function getImageUrl(obj?: any): string | undefined {
   if (!obj) return undefined;
+  const PLACEHOLDER = '/placeholder-product.jpg';
   const raw = obj.imagen_url ?? obj.image_url ?? obj.image ?? obj.imagen;
-  if (!raw) return undefined;
+  if (!raw) return PLACEHOLDER;
 
   // Si ya es una URL absoluta o data/blob, devolver tal cual
   if (/^(https?:)?\/\//i.test(raw) || /^data:|^blob:/i.test(raw)) return raw;

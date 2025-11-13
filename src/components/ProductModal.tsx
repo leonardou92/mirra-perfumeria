@@ -55,13 +55,13 @@ export default function ProductModal({ product, open, onClose, onAddToCart }: Pr
             <div className="relative w-full max-w-md mx-auto">
               <div className="aspect-square bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl p-6 shadow-sm border border-gray-100 overflow-hidden">
                 <img
-                  src={getImageUrl(product) || '/placeholder-product.jpg'}
+                  src={getImageUrl(product)}
                   alt={product.name}
                   className="h-full w-full object-contain transition-all duration-300 hover:scale-105"
                   onError={(e) => { 
                     const target = e.currentTarget as HTMLImageElement; 
                     target.onerror = null; 
-                    target.src = '/placeholder-product.jpg'; 
+                    target.src = getImageUrl(undefined) as string; 
                   }}
                 />
               </div>

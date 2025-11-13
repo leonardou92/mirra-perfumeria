@@ -88,9 +88,10 @@ export function Cart({ items, onClose, onUpdateQuantity, onRemove, onCheckout }:
               className="bg-white rounded-lg p-4 flex space-x-4 border border-cream-300 shadow-sm"
             >
               <img
-                src={getImageUrl(item.product) || '/placeholder-product.jpg'}
+                src={getImageUrl(item.product)}
                 alt={item.product.name}
                 className="w-20 h-20 object-cover rounded-lg"
+                onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; }}
               />
 
                 <div className="flex-1">
