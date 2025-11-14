@@ -74,6 +74,7 @@ export default function Productos() {
   const [assignMotivo, setAssignMotivo] = useState<string>("");
   const [assignReferencia, setAssignReferencia] = useState<string>("");
   const [assignLoading, setAssignLoading] = useState(false);
+  
   const form = useForm({
     defaultValues: {
       nombre: "",
@@ -151,6 +152,16 @@ export default function Productos() {
         } catch (e) {
           console.error('Error cargando marcas', e);
           setMarcas([]);
+        }
+        // Si estamos editando un producto, también pre-cargar almacenes para poder asignar existencia desde el modal
+        if (editingProduct) {
+          try {
+            const a = await getAlmacenes();
+            setAlmacenes(Array.isArray(a) ? a : []);
+          } catch (e) {
+            console.warn('No se pudieron cargar almacenes al abrir modal de producto', e);
+            setAlmacenes([]);
+          }
         }
       })();
     }
@@ -342,6 +353,11 @@ export default function Productos() {
 
   // Abrir modal de asignar almacén: cargar almacenes si es necesario
   async function openAssignModal() {
+    // Reset modal state to avoid using stale seleccion/valores
+    setSelectedAlmacenId(null);
+    setAssignCantidad(0);
+    setAssignMotivo('');
+    setAssignReferencia('');
     setAssignOpen(true);
     setAlmacenes([]);
     try {
@@ -352,10 +368,21 @@ export default function Productos() {
       const msg = parseApiError(err) || 'No se pudieron cargar los almacenes';
       toast.error(msg);
     }
+
+    // If we have a viewStockProduct selected, refresh its detail to ensure inventory is current
+    try {
+      if (viewStockProduct && viewStockProduct.id) {
+        const fresh = await getProducto(viewStockProduct.id);
+        setViewStockDetalle(fresh);
+      }
+    } catch (e) {
+      console.warn('No se pudo recargar detalle del producto al abrir asignar modal', e);
+    }
   }
 
   async function handleAssignSubmit() {
-    const productId = (viewStockDetalle?.id) || (viewStockProduct?.id) || (editingProduct?.id);
+    // Prefer explicit viewStockProduct (clicked product), otherwise use detail or editingProduct
+    const productId = viewStockProduct?.id ?? viewStockDetalle?.id ?? editingProduct?.id;
     if (!productId) {
       toast.error('Producto no seleccionado');
       return;
@@ -397,6 +424,8 @@ export default function Productos() {
       setAssignLoading(false);
     }
   }
+
+  
 
   return (
     <Layout>
@@ -572,7 +601,7 @@ export default function Productos() {
                           </div>
                         </FormItem>
                         {/* Inventario por almacén (solo en modo edición) */}
-                        {editingProduct && (
+                        {editingProduct && ( <>
                           <div className="col-span-2 mt-4">
                             <h4 className="text-sm font-semibold mb-2">Inventario por almacén</h4>
                             {loadingDetalle ? (
@@ -614,7 +643,27 @@ export default function Productos() {
                               })()
                             )}
                           </div>
-                        )}
+                          {/* Añadir existencia: abrir modal separado */}
+                          <div className="col-span-2 mt-4">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm font-medium">Agregar existencia</div>
+                                <div className="text-xs text-muted-foreground">Abrir modal separado para agregar existencia al producto</div>
+                              </div>
+                              <div>
+                                <Button type="button" size="sm" variant="outline" onClick={() => {
+                                  // Preparar campos y abrir el modal de asignación existente
+                                  setSelectedAlmacenId(null);
+                                  setAssignCantidad(0);
+                                  setAssignMotivo('');
+                                  setAssignReferencia('');
+                                  setViewStockProduct(editingProduct);
+                                  openAssignModal();
+                                }}>Agregar existencia</Button>
+                              </div>
+                            </div>
+                          </div>
+                        </>)}
                       </div>
                     </div>
 
@@ -767,18 +816,7 @@ export default function Productos() {
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Agregar existencia (almacén)"
-                            onClick={() => {
-                              setViewStockProduct(product);
-                              // Abrir modal de asignar/añadir almacén y cargar almacenes
-                              openAssignModal();
-                            }}
-                          >
-                            <Plus className="h-4 w-4" />
-                          </Button>
+                          
                           <Button
                             variant="ghost"
                             size="icon"
@@ -986,6 +1024,11 @@ export default function Productos() {
                   <div className="text-sm text-muted-foreground">Stock actual</div>
                   <div className="font-medium">{(() => {
                     const inv = (viewStockDetalle?.inventario) || (viewStockProduct as any)?.inventario || (productDetalle as any)?.inventario || [];
+                    if (!Array.isArray(inv) || inv.length === 0) return '0';
+                    if (!selectedAlmacenId) {
+                      const total = inv.reduce((s: number, x: any) => s + Number(x.stock_fisico || 0), 0);
+                      return Number(total).toLocaleString('es-AR');
+                    }
                     const existing = inv.find((x: any) => Number(x.almacen_id) === Number(selectedAlmacenId));
                     return Number(existing?.stock_fisico || 0).toLocaleString('es-AR');
                   })()}</div>
@@ -993,8 +1036,14 @@ export default function Productos() {
                   <div className="text-sm text-muted-foreground mt-2">Stock resultante (actual + cantidad)</div>
                   <div className="font-semibold">{(() => {
                     const inv = (viewStockDetalle?.inventario) || (viewStockProduct as any)?.inventario || (productDetalle as any)?.inventario || [];
-                    const existing = inv.find((x: any) => Number(x.almacen_id) === Number(selectedAlmacenId));
-                    const actual = Number(existing?.stock_fisico || 0);
+                    if (!Array.isArray(inv) || inv.length === 0) return Number(assignCantidad || 0).toLocaleString('es-AR');
+                    let actual = 0;
+                    if (!selectedAlmacenId) {
+                      actual = inv.reduce((s: number, x: any) => s + Number(x.stock_fisico || 0), 0);
+                    } else {
+                      const existing = inv.find((x: any) => Number(x.almacen_id) === Number(selectedAlmacenId));
+                      actual = Number(existing?.stock_fisico || 0);
+                    }
                     const cantidad = Number(assignCantidad || 0);
                     return (actual + cantidad).toLocaleString('es-AR');
                   })()}</div>

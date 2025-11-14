@@ -1,10 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { toast } from 'sonner';
 import { CartItem } from '@/hooks/use-cart';
-import { createPedidoVentaPublic } from '@/integrations/api';
-import { getTasaActiva } from '@/integrations/api';
-import { useEffect } from 'react';
+import { createPedidoVentaPublic, getFormulas, getProducto, getTasaActiva } from '@/integrations/api';
 
 interface Props {
   open: boolean;
@@ -21,8 +19,6 @@ export default function CheckoutModal({ open, items, onClose, onSuccess }: Props
   const [tasaActiva, setTasaActiva] = useState<any | null>(null);
   const [useTasaActiva, setUseTasaActiva] = useState<boolean>(true);
 
-  if (!open) return null;
-
   useEffect(() => {
     let mounted = true;
     if (!open) return;
@@ -31,7 +27,6 @@ export default function CheckoutModal({ open, items, onClose, onSuccess }: Props
         const t = await getTasaActiva();
         if (!mounted) return;
         setTasaActiva(t);
-        // Si hay una tasa activa, por defecto la usamos
         setUseTasaActiva(Boolean(t));
       } catch (e) {
         // ignore
@@ -40,60 +35,149 @@ export default function CheckoutModal({ open, items, onClose, onSuccess }: Props
     return () => { mounted = false; };
   }, [open]);
 
+  if (!open) return null;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nombreCliente.trim()) {
-      toast.error('Ingrese el nombre del cliente');
-      return;
-    }
-    if (!telefono.trim()) {
-      toast.error('Ingrese el teléfono del cliente');
-      return;
+    if (!nombreCliente.trim()) return toast.error('Ingrese el nombre del cliente');
+    if (!telefono.trim()) return toast.error('Ingrese el teléfono del cliente');
+
+    const lineas = items.map((it) => ({ producto_id: it.product.id, cantidad: Number(it.qty || 0) }));
+
+    // Obtener datos frescos de productos
+    const prodMap = new Map<number, any>();
+    await Promise.all(items.map(async (it) => {
+      const pid = Number(it.product.id);
+      try {
+        const fresh = await getProducto(pid);
+        prodMap.set(pid, fresh || it.product);
+      } catch (e) {
+        prodMap.set(pid, it.product);
+      }
+    }));
+
+    // Determinar items con falta de stock
+    const faltantesItems: Array<{ item: any; disponible: number; solicitado: number }> = [];
+    for (const it of items) {
+      const qty = Number(it.qty || 0);
+      const p: any = prodMap.get(Number(it.product.id)) || it.product;
+      let totalFisico = 0;
+      let totalComprometido = 0;
+      if (Array.isArray(p.inventario) && p.inventario.length > 0) {
+        for (const row of p.inventario) {
+          totalFisico += Number(row.stock_fisico || 0);
+          totalComprometido += Number(row.stock_comprometido || 0);
+        }
+      } else {
+        totalFisico = Number(p.stock || p.stock_fisico || 0);
+        totalComprometido = Number(p.stock_comprometido || 0);
+      }
+      const disponible = totalFisico - totalComprometido;
+      if (qty > disponible) faltantesItems.push({ item: it, disponible, solicitado: qty });
     }
 
-    // Construir lineas mínimas: solo producto_id y cantidad (el servidor calcula precios y subtotales)
-    const lineas = items.map((it) => {
-      const qty = Number(it.qty || 0);
+    // Si hay faltantes, intentar validar producción via fórmulas
+    if (faltantesItems.length > 0) {
+      try {
+        const fRaw = await getFormulas();
+        const formulas = fRaw && Array.isArray((fRaw as any).data) ? (fRaw as any).data : (Array.isArray(fRaw) ? fRaw : []);
+        const formulaByProducto = new Map<number, any>();
+        for (const fm of formulas) {
+          const pid = Number(fm.producto_terminado_id ?? fm.producto_id ?? fm.producto_terminado?.id);
+          if (pid) formulaByProducto.set(pid, fm);
+        }
+
+        const productoCache = new Map<number, any>();
+        const errores: string[] = [];
+
+        for (const fItem of faltantesItems) {
+          const it = fItem.item;
+          const qty = fItem.solicitado;
+          const p: any = prodMap.get(Number(it.product.id)) || it.product;
+          const formula = formulaByProducto.get(Number(p.id));
+          if (!formula || !Array.isArray(formula.componentes) || formula.componentes.length === 0) {
+            errores.push(`${p.nombre || p.name || `#${p.id}`}: no hay stock ni fórmula para producir`);
+            continue;
+          }
+
+          let puedeProducir = true;
+          const faltantesComp: string[] = [];
+          for (const comp of formula.componentes) {
+            const matId = Number(comp.materia_prima_id ?? comp.producto_id ?? comp.materia_prima?.id);
+            const requiredPerUnit = Number(comp.cantidad ?? comp.cant ?? 0);
+            const requiredTotal = requiredPerUnit * qty;
+            if (!matId) {
+              puedeProducir = false;
+              faltantesComp.push('materia_prima_desconocida');
+              break;
+            }
+            let matProd = productoCache.get(matId);
+            if (!matProd) {
+              try { matProd = await getProducto(matId); } catch (e) { matProd = null; }
+              productoCache.set(matId, matProd);
+            }
+            const totalFis = matProd && Array.isArray(matProd.inventario) && matProd.inventario.length > 0
+              ? matProd.inventario.reduce((s: number, r: any) => s + Number(r.stock_fisico || 0), 0)
+              : Number(matProd?.stock || matProd?.stock_fisico || 0);
+            const totalComp = matProd && Array.isArray(matProd.inventario) && matProd.inventario.length > 0
+              ? matProd.inventario.reduce((s: number, r: any) => s + Number(r.stock_comprometido || 0), 0)
+              : Number(matProd?.stock_comprometido || 0);
+            const availableMat = (Number(totalFis) - Number(totalComp)) || 0;
+            if (availableMat < requiredTotal) {
+              puedeProducir = false;
+              const matName = matProd ? (matProd.nombre || matProd.name || `#${matId}`) : `#${matId}`;
+              faltantesComp.push(`${matName}: disponible ${availableMat}, requiere ${requiredTotal}`);
+            }
+          }
+
+          if (!puedeProducir) errores.push(`${p.nombre || p.name || `#${p.id}`}: materias primas insuficientes (${faltantesComp.join(' ; ')})`);
+        }
+
+        if (errores.length > 0) {
+          toast.error(`No se puede crear el pedido: ${errores.join(' ; ')}`);
+          return;
+        }
+        // Si llegamos aquí, los items faltantes son producibles -> continuar
+      } catch (e) {
+        console.warn('Error verificando fórmulas/materias primas', e);
+        toast.error('No hay stock suficiente para agregar al pedido');
+        return;
+      }
+    }
+
+    // Construir snapshot de productos para enviar si el backend lo necesita
+    const productosSnapshot = items.map((it) => {
+      const p: any = it.product as any;
       return {
-        producto_id: it.product.id,
-        cantidad: qty,
+        id: undefined,
+        producto_id: p.id,
+        cantidad: Number(it.qty || 0),
+        producto_nombre: p.name || p.nombre,
+        precio_venta: Number(p.price ?? p.precio_venta ?? 0),
+        costo: p.costo ?? undefined,
+        image_url: p.image_url ?? p.image ?? undefined,
+        subtotal: Number(p.price ?? p.precio_venta ?? 0) * Number(it.qty || 0),
       };
     });
 
-      // Construir snapshot de productos para enviar si el backend lo necesita
-      const productosSnapshot = items.map((it) => {
-        const p: any = it.product as any;
-        return {
-          id: undefined,
-          producto_id: p.id,
-          cantidad: Number(it.qty || 0),
-          producto_nombre: p.name,
-          precio_venta: Number(p.price ?? p.precio_venta ?? 0),
-          costo: p.costo ?? undefined,
-          image_url: p.image_url ?? p.image ?? undefined,
-          subtotal: Number(p.price ?? p.precio_venta ?? 0) * Number(it.qty || 0),
-        };
-      });
-
-    const payload = {
+    const payload: any = {
       nombre_cliente: nombreCliente.trim(),
       telefono: telefono.trim(),
       cedula: cedula.trim() || undefined,
       lineas,
-        _preserve_productos: true,
-        productos: productosSnapshot,
-    } as any;
+      _preserve_productos: true,
+      productos: productosSnapshot,
+    };
 
     if (useTasaActiva && tasaActiva && (typeof tasaActiva.monto === 'number' && tasaActiva.monto > 0)) {
       payload.tasa_cambio_monto = tasaActiva.monto;
     }
 
     try {
-  setLoading(true);
-  // usar el endpoint público para pedidos anónimos (sin token)
-  const created = await createPedidoVentaPublic(payload);
+      setLoading(true);
+      const created = await createPedidoVentaPublic(payload);
       toast.success('Pedido creado correctamente');
-      // Comprobar si el backend cambió los precios que enviamos (snapshot)
+      // comprobar cambios de precio
       try {
         const sentMap = new Map<number, any>();
         (payload.productos || []).forEach((it: any) => sentMap.set(Number(it.producto_id), it));
@@ -121,18 +205,35 @@ export default function CheckoutModal({ open, items, onClose, onSuccess }: Props
       onSuccess();
     } catch (err: any) {
       console.error('Error creando pedido:', err);
-  const text = err?.message || (err?.toString && err.toString()) || '';
-      // Mapear mensajes técnicos a texto de usuario
-      // Map server messages (including the documented public endpoint messages)
-      if (/Productos \(array productos o lineas\) requeridos/i.test(text) || /productos requeridos/i.test(text)) {
-        toast.error('Agrega al menos un producto al pedido');
-      } else if (/Cantidad inválida en productos/i.test(text) || /cantidad inválida/i.test(text) || /productos inválidos/i.test(text) || /productos invalidos/i.test(text)) {
-        toast.error('Revise las cantidades y productos en el carrito');
-      } else if (/Producto .* sin stock suficiente y sin fórmula para producir/i.test(text)) {
-        toast.error('No hay stock suficiente para uno o más productos');
-      } else if (/tasa_cambio_monto inválida/i.test(text)) {
-        toast.error('La tasa de cambio no es válida');
-      } else if (err?.status === 500 || /tasas_cambio|relation \\"tasas_cambio\\"/i.test(text)) {
+      let raw = err?.message || (err?.toString && err.toString()) || '';
+
+      // Si el string viene entrecomillado o doble-escaped, intentar normalizar
+      if (typeof raw === 'string' && /^".*"$/.test(raw.trim())) {
+        try { raw = raw.trim().slice(1, -1).replace(/\\"/g, '"'); } catch (e) { /* noop */ }
+      }
+
+      // Intentar parsear JSON directo o tras un unescape
+      let parsedErr: any = null;
+      try { parsedErr = JSON.parse(raw); } catch (e1) { try { parsedErr = JSON.parse(raw.replace(/\\"/g, '"')); } catch (e2) { parsedErr = null; } }
+
+      if (parsedErr && typeof parsedErr === 'object') {
+        const errMsg = String(parsedErr.error || parsedErr.message || '');
+        if (/Stock insuficiente/i.test(errMsg) || (parsedErr.details && typeof parsedErr.details === 'object')) {
+          toast.error('Stock insuficiente');
+          return;
+        }
+        if (errMsg) { toast.error(errMsg); return; }
+      }
+
+      if (typeof raw === 'string' && /Stock insuficiente/i.test(raw)) { toast.error('Stock insuficiente'); return; }
+
+      // Detecciones adicionales
+      const text = String(raw || '');
+      if (/Productos \(array productos o lineas\) requeridos/i.test(text) || /productos requeridos/i.test(text)) { toast.error('Agrega al menos un producto al pedido'); return; }
+      if (/Cantidad inválida en productos/i.test(text) || /cantidad inválida/i.test(text) || /productos inválidos/i.test(text) || /productos invalidos/i.test(text)) { toast.error('Revise las cantidades y productos en el carrito'); return; }
+      if (/Producto .* sin stock suficiente y sin fórmula para producir/i.test(text)) { toast.error('No hay stock suficiente para uno o más productos'); return; }
+
+      if (err?.status === 500 || /tasas_cambio|relation \"tasas_cambio\"/i.test(text)) {
         try {
           const key = 'mirra_pending_pedidos';
           const existing = JSON.parse(localStorage.getItem(key) || '[]');
@@ -140,13 +241,15 @@ export default function CheckoutModal({ open, items, onClose, onSuccess }: Props
           localStorage.setItem(key, JSON.stringify(existing));
           toast.success('Pedido guardado localmente. Se enviará cuando el servidor esté disponible.');
           onSuccess();
+          return;
         } catch (e) {
           console.error('Error encolando pedido localmente', e);
-          toast.error(err?.message || 'Error al crear pedido');
+          toast.error('Error al crear pedido');
+          return;
         }
-      } else {
-        toast.error(err?.message || 'Error al crear pedido');
       }
+
+      toast.error('Error al crear pedido');
     } finally {
       setLoading(false);
       onClose();

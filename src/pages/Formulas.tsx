@@ -170,8 +170,18 @@ export default function Formulas() {
     return false;
   };
 
-  const materias = productos.filter((p) => isMateriaPrima(p));
-  const terminados = productos.filter((p) => !isMateriaPrima(p));
+  // Helper para determinar si un producto tiene al menos un almacén asociado
+  const hasAnyAlmacen = (p: any) => {
+    if (!p) return false;
+    if (Array.isArray(p.inventario) && p.inventario.length > 0) return true;
+    if (Array.isArray(p.almacenes) && p.almacenes.length > 0) return true;
+    return false;
+  };
+
+  // Excluir productos sin almacén al mostrar materias primas
+  const materias = productos.filter((p) => isMateriaPrima(p) && hasAnyAlmacen(p));
+  // Mostrar solo productos terminados que tengan almacén también
+  const terminados = productos.filter((p) => !isMateriaPrima(p) && hasAnyAlmacen(p));
 
   // Enriquecer fórmulas con nombres de productos cuando la API sólo devuelve ids.
   async function enrichAndSetFormulas(rawFormulas: any[]) {
@@ -273,9 +283,13 @@ export default function Formulas() {
                 <label className="text-sm">Producto terminado</label>
                 <select className="w-full rounded-md border px-2 py-2" value={productoTerminadoId ?? ''} onChange={(e) => setProductoTerminadoId(e.target.value ? Number(e.target.value) : null)}>
                   <option value="">-- Seleccione producto terminado --</option>
-                  {terminados.map((p) => (
-                    <option key={p.id} value={p.id}>{p.nombre || p.id}</option>
-                  ))}
+                  {terminados.length === 0 ? (
+                    <option value="" disabled>-- No hay productos con almacén disponibles --</option>
+                  ) : (
+                    terminados.map((p) => (
+                      <option key={p.id} value={p.id}>{p.nombre || p.id}</option>
+                    ))
+                  )}
                 </select>
               </div>
 
