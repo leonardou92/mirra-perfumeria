@@ -1,4 +1,4 @@
-import { Home, Package, Users, Warehouse, FlaskConical, ShoppingCart, Building2, CreditCard, Receipt, LogOut, Tag } from "lucide-react";
+import { Home, Package, Users, Warehouse, FlaskConical, ShoppingCart, Building2, CreditCard, Receipt, LogOut, Layers, Award } from "lucide-react";
 import { useLocation } from 'react-router-dom';
 import {
   Sidebar,
@@ -26,7 +26,8 @@ const menuItems = [
   { title: "Pedidos", url: "/pedidos", icon: ShoppingCart },
   { title: "Bancos", url: "/bancos", icon: Building2 },
   { title: "Tasas de cambio", url: "/tasas-cambio", icon: CreditCard },
-  { title: "Categorías", url: "/categorias", icon: Tag },
+  { title: "Categorías", url: "/categorias", icon: Layers },
+  { title: "Marcas", url: "/marcas", icon: Award },
 ];
 
 export function AppSidebar() {

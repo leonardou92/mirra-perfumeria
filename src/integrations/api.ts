@@ -167,6 +167,27 @@ export async function deleteCategoria(id: number) {
   return apiFetch(`/categorias/${id}`, { method: 'DELETE' });
 }
 
+// Marcas (CRUD)
+export async function getMarcas() {
+  return apiFetch('/marcas');
+}
+
+export async function getMarca(id: number) {
+  return apiFetch(`/marcas/${id}`);
+}
+
+export async function createMarca(data: { nombre: string; descripcion?: string | null }) {
+  return apiFetch('/marcas', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateMarca(id: number, data: { nombre: string; descripcion?: string | null }) {
+  return apiFetch(`/marcas/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function deleteMarca(id: number) {
+  return apiFetch(`/marcas/${id}`, { method: 'DELETE' });
+}
+
 
 // Cliente-Bancos
 export async function getClienteBancos() {

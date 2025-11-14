@@ -30,6 +30,8 @@ import { toast } from "sonner";
 import { parseApiError } from '@/lib/utils';
 import { createProducto, updateProducto } from "@/integrations/api";
 import ImageUpload from "@/components/ImageUpload";
+// Category and brand selects (no CRUD) - cargamos listas desde API
+import { getCategorias, getMarcas } from '@/integrations/api';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -80,8 +82,15 @@ export default function Productos() {
       costo: 0,
       precio_venta: 0,
       proveedor_id: null,
+      categoria_id: null,
+      marca_id: null,
     },
   });
+
+  const [categoriaId, setCategoriaId] = useState<number | null>(null);
+  const [marcaId, setMarcaId] = useState<number | null>(null);
+  const [categorias, setCategorias] = useState<any[]>([]);
+  const [marcas, setMarcas] = useState<any[]>([]);
 
   useEffect(() => {
     getProductos()
@@ -96,6 +105,26 @@ export default function Productos() {
       // Inicializar la URL de imagen con la existente del producto (si la tiene).
       // Soportar ambas propiedades por si la API usa `image_url` o `imagen_url`.
       setImageUrl(editingProduct?.imagen_url ?? editingProduct?.image_url ?? null);
+      // inicializar categoria/marca
+      setCategoriaId(editingProduct?.categoria_id ?? null);
+      setMarcaId(editingProduct?.marca_id ?? null);
+      // cargar categorías disponibles cuando se abre el modal
+      (async () => {
+        try {
+          const list = await getCategorias();
+          setCategorias(Array.isArray(list) ? list : (list?.data || []));
+        } catch (e) {
+          console.error('Error cargando categorias', e);
+          setCategorias([]);
+        }
+        try {
+          const m = await getMarcas();
+          setMarcas(Array.isArray(m) ? m : (m?.data || []));
+        } catch (e) {
+          console.error('Error cargando marcas', e);
+          setMarcas([]);
+        }
+      })();
     }
   }, [isOpen, editingProduct]);
 
@@ -145,7 +174,9 @@ export default function Productos() {
         costo: Number.isNaN(costo) ? null : costo,
         precio_venta: Number.isNaN(precio_venta) ? null : precio_venta,
         proveedor_id: Number.isNaN(proveedor_id) ? null : proveedor_id,
-        imagen_url: imageUrl || null, // Changed from image_url to imagen_url to match your API
+        image_url: imageUrl || null,
+        categoria_id: categoriaId ?? null,
+        marca_id: marcaId ?? null,
       };
       console.log("Creando/actualizando producto, payload:", payload);
       if (editingProduct) {
@@ -209,7 +240,9 @@ export default function Productos() {
           costo: Number.isNaN(costo as number) ? null : costo,
           precio_venta: Number.isNaN(precio_venta as number) ? null : precio_venta,
           proveedor_id: Number.isNaN(proveedor_id as number) ? null : proveedor_id,
-          imagen_url: url,
+          image_url: url,
+          categoria_id: categoriaId ?? (editingProduct?.categoria_id ?? null),
+          marca_id: marcaId ?? (editingProduct?.marca_id ?? null),
         };
 
         const updated = await updateProducto(editingProduct.id, payload);
@@ -456,6 +489,39 @@ export default function Productos() {
                             />
                           </FormControl>
                         </FormItem>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <FormLabel>Categoría</FormLabel>
+                            <FormControl>
+                              <select
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                value={categoriaId ?? ''}
+                                onChange={(e) => setCategoriaId(e.target.value ? Number(e.target.value) : null)}
+                              >
+                                <option value="">-- Sin categoría --</option>
+                                {categorias.map((c) => (
+                                  <option key={c.id} value={c.id}>{c.nombre}</option>
+                                ))}
+                              </select>
+                            </FormControl>
+                          </div>
+                          <div>
+                            <FormLabel>Marca</FormLabel>
+                            <FormControl>
+                              <select
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                value={marcaId ?? ''}
+                                onChange={(e) => setMarcaId(e.target.value ? Number(e.target.value) : null)}
+                              >
+                                <option value="">-- Sin marca --</option>
+                                {marcas.map((m) => (
+                                  <option key={m.id} value={m.id}>{m.nombre}</option>
+                                ))}
+                              </select>
+                            </FormControl>
+                          </div>
+                        </div>
                       </div>
 
                       {/* Columna Derecha - Imagen */}
@@ -583,6 +649,8 @@ export default function Productos() {
                     <TableHead>Nombre</TableHead>
                     <TableHead>Tipo</TableHead>
                     <TableHead>Unidad</TableHead>
+                    <TableHead>Categoría</TableHead>
+                    <TableHead>Marca</TableHead>
                     <TableHead>Stock</TableHead>
                     <TableHead>Costo</TableHead>
                     <TableHead>Precio Venta</TableHead>
@@ -607,6 +675,8 @@ export default function Productos() {
                       <TableCell className="font-medium">{product.nombre}</TableCell>
                       <TableCell>{product.tipo}</TableCell>
                       <TableCell>{product.unidad}</TableCell>
+                      <TableCell>{product.categoria_nombre ?? '-'}</TableCell>
+                      <TableCell>{product.marca_nombre ?? '-'}</TableCell>
                       <TableCell>
                         <span className={product.stock && product.stock < 20 ? "text-destructive font-semibold" : ""}>
                           {product.stock}
@@ -632,7 +702,11 @@ export default function Productos() {
                                 costo: product.costo,
                                 precio_venta: product.precio_venta,
                                 proveedor_id: product.proveedor_id,
+                                categoria_id: product.categoria_id ?? null,
+                                marca_id: product.marca_id ?? null,
                               });
+                              setCategoriaId(product.categoria_id ?? null);
+                              setMarcaId(product.marca_id ?? null);
                               setIsOpen(true);
                               // cargar detalle completo (incluye inventario por almacén)
                               setLoadingDetalle(true);
