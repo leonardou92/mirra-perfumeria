@@ -1081,7 +1081,7 @@ export default function Pedidos() {
               {detailLoading ? (
                 <div>Cargando detalle...</div>
               ) : selectedPedido ? (
-                <div className="space-y-4">
+                  <div className={`space-y-4 ${showPaymentInline ? 'hidden' : ''}`}>
                   <div className="flex justify-between items-center">
                     <div />
                     <div>
@@ -1616,6 +1616,9 @@ export default function Pedidos() {
                   }}
                   onClose={() => setShowPaymentInline(false)}
                 />
+                <div className="mt-3">
+                  <Button variant="outline" onClick={() => setShowPaymentInline(false)}>Volver al pedido</Button>
+                </div>
               </div>
             )}
 

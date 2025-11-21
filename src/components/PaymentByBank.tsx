@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch } from '../integrations/api';
+import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch, getOrdenProduccionDetailed } from '../integrations/api';
 // helpers
 const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
 function extractMonedaFromDetalles(detalles: any) {
@@ -175,6 +175,44 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     }
     loadPedido();
   }, [pedidoId]);
+
+  // Helper: comprobar si el pedido tiene líneas pendientes por producir
+  async function pedidoHasPendingProduction(id: number) {
+    try {
+      const p = await getPedidoVenta(id);
+      const prods = Array.isArray(p?.productos) ? p.productos : (Array.isArray(p?.lineas) ? p.lineas : []);
+      for (const it of (prods || [])) {
+        const created = (it?.produccion_creada === true) || Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
+        const fid = Number(it?.formula_id ?? it?.formulaId ?? it?.formula?.id ?? 0) || 0;
+        const hasComps = Array.isArray(it?.componentes) && it.componentes.length > 0;
+        const orderId = Number(it?.orden_id ?? it?.orden_produccion_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId ?? 0) || 0;
+        // Si hay fórmula sin orden creada -> pendiente
+        if (fid && fid > 0 && !created && !orderId) return true;
+        // Si no hay componentes visibles (se mostraría botón Producir) y no hay orden/producción creada -> pendiente
+        if (!hasComps && !created && !orderId) return true;
+        // Si hay una orden referenciada, comprobar que esté completada
+        if (orderId && orderId > 0) {
+          try {
+            const od = await getOrdenProduccionDetailed(orderId);
+            const ordObj = od?.orden ?? od ?? {};
+            const estadoRaw = String(ordObj?.estado ?? ordObj?.status ?? ordObj?.estado_nombre ?? '').toLowerCase();
+            const completedFlag = Boolean(ordObj?.completada === true || ordObj?.finalizada === true || ordObj?.cerrada === true || ordObj?.completed === true || ordObj?.finished === true);
+            if (completedFlag) continue;
+            if (estadoRaw && (estadoRaw.includes('complet') || estadoRaw.includes('finaliz') || estadoRaw.includes('cerrad') || estadoRaw.includes('done') || estadoRaw.includes('finished'))) {
+              continue;
+            }
+            // si no está completada, considerarla pendiente
+            return true;
+          } catch (e) {
+            return true;
+          }
+        }
+      }
+    } catch (e) {
+      console.debug('pedidoHasPendingProduction error', e);
+    }
+    return false;
+  }
 
   useEffect(() => {
     // Cuando cambia banco seleccionado, actualizar formas disponibles
@@ -809,6 +847,12 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
             throw err;
           }
         }
+        // Verificar que no hay líneas pendientes por producir antes de completar
+        if (await pedidoHasPendingProduction(pedidoId)) {
+          toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+          setLoading(false);
+          return;
+        }
         const data = await completarPedidoVenta(pedidoId);
         // Verificar que el pedido ahora incluye los pagos recién creados
         try {
@@ -913,6 +957,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         // eslint-disable-next-line no-console
         console.debug('create-pago-final-single', payload.pago);
 
+        if (await pedidoHasPendingProduction(pedidoId)) {
+          toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+          setLoading(false);
+          return;
+        }
         const data = await completarPedidoVenta(pedidoId, payload.pago);
         // Verificar que el pago quedó asociado
         try {
@@ -967,6 +1016,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         setLoading(true);
         setErrors(null);
         try {
+          if (await pedidoHasPendingProduction(pedidoId)) {
+            toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+            setLoading(false);
+            return;
+          }
           const data = await completarPedidoVenta(pedidoId);
           if (onSuccess) onSuccess(data);
           setShowSuccess(true);
@@ -1093,6 +1147,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
 
         // Enviar en un solo paso: crear y completar el pedido (backend debe soportar crear+finalizar)
         // Esto evita duplicados al crear el pago por separado y luego completar.
+        if (await pedidoHasPendingProduction(pedidoId)) {
+          toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+          setLoading(false);
+          return;
+        }
         const data = await completarPedidoVenta(pedidoId, pago);
         // Verificar asociación del pago
         try {
@@ -1284,7 +1343,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
           </div>
           <div className="text-sm text-gray-600">Registra uno o varios pagos para este pedido y complétalo. Los pagos se conservarán en el historial del pedido.</div>
         </div>
-
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => { if (onClose) onClose(); }} title="Volver al pedido">
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
       </div>
 
       {/* Mobile: botón para mostrar/ocultar el resumen lateral y ahorrar espacio */}
