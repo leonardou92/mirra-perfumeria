@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula } from "@/integrations/api";
+import { getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas } from "@/integrations/api";
 import PaymentByBank from '@/components/PaymentByBank';
 import { parseApiError, getImageUrl } from '@/lib/utils';
 import { Eye } from 'lucide-react';
@@ -56,265 +56,7 @@ export default function Pedidos() {
     return tipo.includes('materia') || tipo.includes('materiaprima');
   }
 
-  async function openProduceModalForLine(line: any) {
-    setProdLine(line);
-    setProdCantidad(Number(line?.cantidad ?? 1) || 1);
-    setProdSelectedAlmacen(null);
-    setProdAlmacenes([]);
-    setProdModalOpen(true);
-    try {
-      const ares = await getAlmacenes();
-      const list = Array.isArray(ares) ? ares : (ares?.data || []);
-      const ventaList = list.filter((a: any) => !isMateriaAlmacen(a));
-      setProdAlmacenes(ventaList);
-      // Preferir el almacén asociado al pedido/linea si existe
-      let preferido: number | null = null;
-      try {
-        const cand = line?.almacen_id ?? line?.almacenVentaId ?? line?.almacen_venta_id ?? selectedPedido?.almacen_id ?? selectedPedido?.almacen_venta_id ?? selectedPedido?.almacenId ?? null;
-        if (cand) preferido = Number(cand);
-      } catch (e) { console.debug(e); }
-      const venta = ventaList.find((a: any) => Number(a.id) === Number(preferido)) || ventaList.find((a: any) => a.tipo === 'Venta') || ventaList[0];
-      setProdSelectedAlmacen(venta ? venta.id : null);
-      // Si la línea no trae componentes, intentar cargar la fórmula asociada para mostrar componentes
-      let fetchedFormula: any = null;
-      try {
-        const fid = Number(line?.formula_id ?? line?.formula?.id ?? 0);
-        if (fid && (!Array.isArray(line?.componentes) || line.componentes.length === 0)) {
-          try {
-            fetchedFormula = await getFormula(fid);
-            if (fetchedFormula) setProdLine((prev: any) => ({ ...prev, formula_fetched: fetchedFormula }));
-          } catch (err) {
-            console.debug('Error fetching formula', err);
-          }
-        }
-      } catch (e) { console.debug(e); }
 
-      // Preparar componentes editables para el modal (usar los de la línea o los de la fórmula fetch)
-      try {
-        const comps = Array.isArray(line?.componentes) && line.componentes.length > 0
-          ? line.componentes
-          : (fetchedFormula?.componentes ?? line?.formula?.componentes ?? []);
-        let initial = (Array.isArray(comps) ? comps : []).map((c: any) => {
-          const unit = Number(c?.cantidad_por_unidad ?? c?.cantidad ?? 0) || 0;
-          const cantidad_init = unit * (Number(line?.cantidad ?? prodCantidad) || 1);
-          return {
-            materia_prima_id: Number(c?.materia_prima_id ?? c?.id ?? 0) || null,
-            nombre: c?.materia_prima_nombre ?? c?.materia_nombre ?? c?.nombre ?? null,
-            unidad: c?.unidad ?? c?.u ?? '',
-            cantidad_por_unidad: unit,
-            cantidad_editable: Number(Number(cantidad_init).toFixed(2)),
-          };
-        });
-
-        // Resolver nombres faltantes consultando getProducto y poblar materiasCostMap
-        try {
-          const missingIds = Array.from(new Set(initial.filter((c) => (!c.nombre || c.nombre === null) && c.materia_prima_id).map((c) => Number(c.materia_prima_id))));
-          if (missingIds.length > 0) {
-            const fetched = await Promise.all(missingIds.map((id) => getProducto(id).catch(() => null)));
-            const fetchedMap: Record<number, any> = {};
-            fetched.forEach((res: any, i: number) => {
-              const id = missingIds[i];
-              if (res) fetchedMap[id] = { nombre: res.nombre ?? res.name ?? null };
-            });
-            if (Object.keys(fetchedMap).length > 0) setMateriasCostMap((prev) => ({ ...(prev || {}), ...(fetchedMap || {}) }));
-            // Aplicar nombres resueltas a la lista local
-            initial = initial.map((c) => {
-              const id = Number(c.materia_prima_id ?? 0) || 0;
-              if ((!c.nombre || c.nombre === null) && fetchedMap[id] && fetchedMap[id].nombre) {
-                return { ...c, nombre: fetchedMap[id].nombre };
-              }
-              return c;
-            });
-          }
-        } catch (err) {
-          console.debug('Error resolviendo nombres de materias en modal', err);
-        }
-
-        setProdComponents(initial);
-      } catch (e) { console.debug(e); }
-    } catch (e) {
-      console.debug('No se pudieron cargar almacenes para producción', e);
-    }
-  }
-
-  async function handleProduceFromLine() {
-    if (!prodLine) return;
-    const formulaId = Number(prodLine?.formula_id ?? prodLine?.formula?.id ?? 0);
-    if (!formulaId || Number.isNaN(formulaId) || formulaId <= 0) {
-      toast.error('La línea no tiene asociado una fórmula válida para producir');
-      return;
-    }
-    if (!prodSelectedAlmacen) { toast.error('No se pudo determinar el almacén destino para esta producción'); return; }
-    if (!prodCantidad || Number(prodCantidad) <= 0) { toast.error('Ingrese una cantidad válida (>0)'); return; }
-    setProdSubmitting(true);
-      try {
-      // Intentar crear orden de producción con componentes personalizados (según lo editado en el modal)
-      const payload: any = {
-        formula_id: formulaId,
-        cantidad: Number(prodCantidad),
-        almacen_venta_id: Number(prodSelectedAlmacen),
-      };
-      // intentar derivar el producto terminado desde la fórmula/linea
-      try {
-        const prodTerm = Number(prodLine?.formula?.producto_terminado_id ?? prodLine?.formula_fetched?.producto_terminado_id ?? prodLine?.producto_terminado_id ?? prodLine?.producto_id ?? prodLine?.producto?.id ?? prodLine?.productoId ?? 0) || null;
-        if (prodTerm) payload.producto_terminado_id = prodTerm;
-      } catch (e) { /* noop */ }
-      // Validar componentes: ninguna cantidad puede ser 0 o menor
-      if (Array.isArray(prodComponents) && prodComponents.length > 0) {
-        const bad = prodComponents.find((c: any) => !Number.isFinite(Number(c?.cantidad_editable)) || Number(c.cantidad_editable) <= 0);
-        if (bad) {
-          toast.error('Las cantidades de los componentes deben ser mayores que 0');
-          setProdSubmitting(false);
-          return;
-        }
-      }
-      if (Array.isArray(prodComponents) && prodComponents.length > 0) {
-        payload.componentes = prodComponents.map((c: any) => ({
-          materia_prima_id: c.materia_prima_id,
-          cantidad: Number(c.cantidad_editable),
-          unidad: c.unidad,
-        }));
-      }
-      try {
-        // intentar crear y capturar la respuesta (para obtener id de orden)
-        let createdResp: any = null;
-        let creationPath = 'none';
-        // Preferir endpoint específico para crear orden desde línea de pedido si disponemos de pedido y línea
-        if (selectedPedido?.id && prodLine?.id) {
-          try {
-            createdResp = await apiFetch(`/pedidos-venta/${selectedPedido.id}/lineas/${prodLine.id}/ordenes-produccion`, { method: 'POST' });
-            creationPath = 'line';
-          } catch (errLine: any) {
-            // Intentar interpretar errores esperados del backend
-            try {
-              const txt = String(errLine?.message || errLine || '');
-              const parsed = JSON.parse(txt);
-              if (parsed && parsed.code === 'MISSING_FORMULA') {
-                toast.error('La línea no tiene fórmula asociada (MISSING_FORMULA)');
-                setProdSubmitting(false);
-                return;
-              }
-              if (parsed && parsed.code === 'ALREADY_CREATED') {
-                toast.error('La línea ya tiene una orden creada (ALREADY_CREATED)');
-                setProdSubmitting(false);
-                return;
-              }
-            } catch (e) {
-              // no-op: no pudimos parsear JSON, continuar con fallback
-            }
-            // si el endpoint de línea falló por otra razón, seguiremos con creación general abajo
-          }
-        }
-
-        if (!createdResp) {
-          try {
-            createdResp = await apiFetch('/ordenes-produccion', { method: 'POST', body: JSON.stringify(payload) });
-            creationPath = 'general';
-          } catch (errPost) {
-            // si el endpoint no acepta el payload, fallback a la API helper existente
-            try {
-              createdResp = await createProduccion(formulaId, { cantidad: Number(prodCantidad), almacen_venta_id: Number(prodSelectedAlmacen) });
-              creationPath = 'helper';
-            } catch (err2) {
-              // última opción: rethrow
-              throw err2 ?? errPost;
-            }
-          }
-        }
-
-        toast.success('Producción creada');
-        // extraer id de la respuesta en varias formas posibles y actualizar UI según la ruta usada
-        try {
-          // Si la creación fue por endpoint de línea, el backend puede devolver { orden_produccion, linea_actualizada }
-          if (creationPath === 'line') {
-            const ordenObj = createdResp?.orden_produccion ?? createdResp?.orden ?? createdResp?.orden_produccion ?? null;
-            const linea = createdResp?.linea_actualizada ?? createdResp?.linea ?? createdResp?.linea_actual ?? null;
-            const ordenId = Number(ordenObj?.id ?? ordenObj?.orden_id ?? null) || null;
-            if (selectedPedido && prodLine) {
-              const updatedProductos = (selectedPedido.productos || []).map((p: any) => {
-                // preferir match por id de línea (linea.id), luego por producto+cantidad
-                if (linea && Number(linea.id) && Number(p.id) && Number(p.id) === Number(linea.id)) {
-                  return { ...p, produccion_creada: true, orden_id: linea.orden_produccion_id ?? ordenId ?? p.orden_id ?? p.orden_produccion_id ?? null };
-                }
-                // fallback: si prodLine coincide con p según heurística previa
-                const matchLine = (a: any, b: any) => {
-                  try {
-                    if (!a || !b) return false;
-                    if (a.id && b.id && Number(a.id) === Number(b.id)) return true;
-                    const aPid = a.producto_id ?? a.productoId ?? a.producto ?? a.producto_id;
-                    const bPid = b.producto_id ?? b.productoId ?? b.producto ?? b.producto_id;
-                    if (aPid && bPid && Number(aPid) === Number(bPid)) {
-                      const aq = Number(a.cantidad ?? a.qty ?? 0);
-                      const bq = Number(b.cantidad ?? b.qty ?? 0);
-                      if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
-                    }
-                    if (a.nombre && b.nombre && String(a.nombre) === String(b.nombre)) {
-                      const aq = Number(a.cantidad ?? a.qty ?? 0);
-                      const bq = Number(b.cantidad ?? b.qty ?? 0);
-                      if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
-                    }
-                    return false;
-                  } catch (e) { return false; }
-                };
-                if (matchLine(p, prodLine)) {
-                  return { ...p, produccion_creada: true, orden_id: linea?.orden_produccion_id ?? ordenId ?? p.orden_id ?? p.orden_produccion_id ?? null };
-                }
-                return p;
-              });
-              const newSelected = { ...selectedPedido, productos: updatedProductos };
-              setSelectedPedido(newSelected);
-              setPedidos((list) => (Array.isArray(list) ? list.map((pp: any) => (pp.id === newSelected.id ? { ...pp, productos: updatedProductos } : pp)) : list));
-            }
-          } else {
-            // creación general: createdResp puede ser la orden creada
-            const ordenId = Number(createdResp?.id ?? createdResp?.orden_id ?? createdResp?.orden?.id ?? null) || null;
-            if (selectedPedido && prodLine) {
-              const matchLine = (a: any, b: any) => {
-                try {
-                  if (!a || !b) return false;
-                  if (a.id && b.id && Number(a.id) === Number(b.id)) return true;
-                  const aPid = a.producto_id ?? a.productoId ?? a.producto ?? a.producto_id;
-                  const bPid = b.producto_id ?? b.productoId ?? b.producto ?? b.producto_id;
-                  if (aPid && bPid && Number(aPid) === Number(bPid)) {
-                    const aq = Number(a.cantidad ?? a.qty ?? 0);
-                    const bq = Number(b.cantidad ?? b.qty ?? 0);
-                    if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
-                  }
-                  if (a.nombre && b.nombre && String(a.nombre) === String(b.nombre)) {
-                    const aq = Number(a.cantidad ?? a.qty ?? 0);
-                    const bq = Number(b.cantidad ?? b.qty ?? 0);
-                    if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
-                  }
-                  return false;
-                } catch (e) { return false; }
-              };
-
-              const updatedProductos = (selectedPedido.productos || []).map((p: any) => {
-                if (matchLine(p, prodLine)) {
-                  return { ...p, produccion_creada: true, orden_id: ordenId ?? p.orden_id ?? p.ordenes_produccion_id ?? p.orden_produccion_id ?? null };
-                }
-                return p;
-              });
-              const newSelected = { ...selectedPedido, productos: updatedProductos };
-              setSelectedPedido(newSelected);
-              setPedidos((list) => (Array.isArray(list) ? list.map((pp: any) => (pp.id === newSelected.id ? { ...pp, productos: updatedProductos } : pp)) : list));
-            }
-          }
-        } catch (e) { console.debug('Error actualizando UI tras crear producción', e); }
-
-        setProdModalOpen(false);
-        // refrescar detalle abierto para que aparezcan las órdenes/componentes (opcional)
-        if (selectedPedido?.id) await openDetalle(selectedPedido.id);
-      } catch (err) {
-        throw err;
-      }
-    } catch (err) {
-      console.error('Error creando producción desde pedido', err);
-      toast.error(parseApiError(err) || 'No se pudo crear la producción');
-    } finally {
-      setProdSubmitting(false);
-    }
-  }
   const navigate = useNavigate();
 
   // Helper: ordenar pedidos por fecha descendente (más recientes primero)
@@ -332,13 +74,15 @@ export default function Pedidos() {
     const s = (p?.estado || p?.status || '').toString().toLowerCase();
     let bg = 'bg-white';
     let border = 'border-transparent';
-    if (s === 'pendiente') { bg = 'bg-yellow-50'; border = 'border-yellow-400'; }
-    else if (s === 'enviado') { bg = 'bg-sky-50'; border = 'border-sky-400'; }
-    else if (s === 'completado') { bg = 'bg-green-50'; border = 'border-green-400'; }
-    else if (s === 'cancelado') { bg = 'bg-red-50'; border = 'border-red-400'; }
+    let borderColor = 'border-transparent';
+    if (s === 'pendiente') { bg = 'bg-yellow-50/60'; borderColor = 'border-yellow-400'; }
+    else if (s === 'enviado') { bg = 'bg-sky-50/60'; borderColor = 'border-sky-400'; }
+    else if (s === 'completado') { bg = 'bg-green-50/60'; borderColor = 'border-green-400'; }
+    else if (s === 'cancelado') { bg = 'bg-red-50/60'; borderColor = 'border-red-400'; }
     const ts = Date.parse(p?.fecha || p?.created_at || p?.createdAt || '') || 0;
     const recent = (Date.now() - ts) < (1000 * 60 * 60 * 24); // 24h
-    return `hover:bg-muted/50 transition-all rounded-md ${bg} ${border} border-l-4 ${recent ? 'shadow-md' : ''}`;
+    // more lively styles: rounded cards, subtle shadow, left accent border and hover scale
+    return `transition-transform transform hover:scale-[1.01] duration-150 rounded-md ${bg} ${borderColor} border-l-4 ${recent ? 'shadow-md' : 'shadow-sm'}`;
   };
 
   useEffect(() => {
@@ -593,6 +337,19 @@ export default function Pedidos() {
   const [prodSelectedAlmacen, setProdSelectedAlmacen] = useState<number | null>(null);
   const [prodSubmitting, setProdSubmitting] = useState(false);
   const [prodComponents, setProdComponents] = useState<any[]>([]);
+  // Estados para eliminar línea de pedido
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteLine, setDeleteLine] = useState<any | null>(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  // Estados para agregar producto al pedido
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [addProductId, setAddProductId] = useState<number | null>(null);
+  const [addCantidad, setAddCantidad] = useState<number>(1);
+  const [addPrecio, setAddPrecio] = useState<number | null>(null);
+  const [presentacionesOptions, setPresentacionesOptions] = useState<any[]>([]);
+  const [addPresentacionId, setAddPresentacionId] = useState<number | null>(null);
+  const [productosOptions, setProductosOptions] = useState<any[]>([]);
+  const [addSubmitting, setAddSubmitting] = useState<boolean>(false);
   // Cuando cambie la cantidad a producir, recalcular las cantidades sugeridas
   // Cuando cambie la cantidad a producir, recalcular las cantidades sugeridas
   useEffect(() => {
@@ -612,6 +369,249 @@ export default function Pedidos() {
       }
     });
   }, [prodCantidad]);
+  // Helpers para producir desde una línea del pedido (moved aquí para tener acceso a hooks)
+  async function openProduceModalForLine(line: any) {
+    setProdLine(line);
+    setProdCantidad(Number(line?.cantidad ?? 1) || 1);
+    setProdSelectedAlmacen(null);
+    setProdAlmacenes([]);
+    setProdModalOpen(true);
+    try {
+      const ares = await getAlmacenes();
+      const list = Array.isArray(ares) ? ares : (ares?.data || []);
+      const ventaList = list.filter((a: any) => !isMateriaAlmacen(a));
+      setProdAlmacenes(ventaList);
+      // Preferir el almacén asociado al pedido/linea si existe
+      let preferido: number | null = null;
+      try {
+        const cand = line?.almacen_id ?? line?.almacenVentaId ?? line?.almacen_venta_id ?? selectedPedido?.almacen_id ?? selectedPedido?.almacen_venta_id ?? selectedPedido?.almacenId ?? null;
+        if (cand) preferido = Number(cand);
+      } catch (e) { console.debug(e); }
+      const venta = ventaList.find((a: any) => Number(a.id) === Number(preferido)) || ventaList.find((a: any) => a.tipo === 'Venta') || ventaList[0];
+      setProdSelectedAlmacen(venta ? venta.id : null);
+      // Si la línea no trae componentes, intentar cargar la fórmula asociada para mostrar componentes
+      let fetchedFormula: any = null;
+      try {
+        const fid = Number(line?.formula_id ?? line?.formula?.id ?? 0);
+        if (fid && (!Array.isArray(line?.componentes) || line.componentes.length === 0)) {
+          try {
+            fetchedFormula = await getFormula(fid);
+            if (fetchedFormula) setProdLine((prev: any) => ({ ...prev, formula_fetched: fetchedFormula }));
+          } catch (err) {
+            console.debug('Error fetching formula', err);
+          }
+        }
+      } catch (e) { console.debug(e); }
+
+      // Preparar componentes editables para el modal (usar los de la línea o los de la fórmula fetch)
+      try {
+        const comps = Array.isArray(line?.componentes) && line.componentes.length > 0
+          ? line.componentes
+          : (fetchedFormula?.componentes ?? line?.formula?.componentes ?? []);
+        let initial = (Array.isArray(comps) ? comps : []).map((c: any) => {
+          const unit = Number(c?.cantidad_por_unidad ?? c?.cantidad ?? 0) || 0;
+          const cantidad_init = unit * (Number(line?.cantidad ?? prodCantidad) || 1);
+          return {
+            materia_prima_id: Number(c?.materia_prima_id ?? c?.id ?? 0) || null,
+            nombre: c?.materia_prima_nombre ?? c?.materia_nombre ?? c?.nombre ?? null,
+            unidad: c?.unidad ?? c?.u ?? '',
+            cantidad_por_unidad: unit,
+            cantidad_editable: Number(Number(cantidad_init).toFixed(2)),
+          };
+        });
+
+        // Resolver nombres faltantes consultando getProducto y poblar materiasCostMap
+        try {
+          const missingIds = Array.from(new Set(initial.filter((c) => (!c.nombre || c.nombre === null) && c.materia_prima_id).map((c) => Number(c.materia_prima_id))));
+          if (missingIds.length > 0) {
+            const fetched = await Promise.all(missingIds.map((id) => getProducto(id).catch(() => null)));
+            const fetchedMap: Record<number, any> = {};
+            fetched.forEach((res: any, i: number) => {
+              const id = missingIds[i];
+              if (res) fetchedMap[id] = { nombre: res.nombre ?? res.name ?? null };
+            });
+            if (Object.keys(fetchedMap).length > 0) setMateriasCostMap((prev) => ({ ...(prev || {}), ...(fetchedMap || {}) }));
+            // Aplicar nombres resueltas a la lista local
+            initial = initial.map((c) => {
+              const id = Number(c.materia_prima_id ?? 0) || 0;
+              if ((!c.nombre || c.nombre === null) && fetchedMap[id] && fetchedMap[id].nombre) {
+                return { ...c, nombre: fetchedMap[id].nombre };
+              }
+              return c;
+            });
+          }
+        } catch (err) {
+          console.debug('Error resolviendo nombres de materias en modal', err);
+        }
+
+        setProdComponents(initial);
+      } catch (e) {
+        console.debug('No se pudieron cargar almacenes para producción', e);
+      }
+    } catch (e) {
+      console.debug('openProduceModalForLine error', e);
+    }
+  }
+
+  async function handleProduceFromLine() {
+    if (!prodLine) return;
+    const formulaId = Number(prodLine?.formula_id ?? prodLine?.formula?.id ?? 0);
+    if (!formulaId || Number.isNaN(formulaId) || formulaId <= 0) {
+      toast.error('La línea no tiene asociado una fórmula válida para producir');
+      return;
+    }
+    if (!prodSelectedAlmacen) { toast.error('No se pudo determinar el almacén destino para esta producción'); return; }
+    if (!prodCantidad || Number(prodCantidad) <= 0) { toast.error('Ingrese una cantidad válida (>0)'); return; }
+    setProdSubmitting(true);
+    try {
+      // intentar crear y capturar la respuesta (para obtener id de orden)
+      let createdResp: any = null;
+      let creationPath = 'none';
+      // construir payload genérico a usar en el endpoint de ordenes-produccion
+      const payload: any = {
+        formula_id: formulaId,
+        cantidad: Number(prodCantidad),
+        almacen_venta_id: Number(prodSelectedAlmacen),
+        producto_terminado_id: Number(prodLine?.producto_id ?? prodLine?.producto?.id ?? prodLine?.producto_terminado_id ?? 0) || undefined,
+        componentes: Array.isArray(prodComponents) ? prodComponents.map((c: any) => ({
+          materia_prima_id: Number(c?.materia_prima_id ?? 0) || null,
+          cantidad: Number(c?.cantidad_editable ?? c?.cantidad_por_unidad ?? 0) || 0,
+          unidad: c?.unidad ?? undefined,
+        })) : undefined,
+      };
+      // Preferir endpoint específico para crear orden desde línea de pedido si disponemos de pedido y línea
+      if (selectedPedido?.id && prodLine?.id) {
+        try {
+          createdResp = await apiFetch(`/pedidos-venta/${selectedPedido.id}/lineas/${prodLine.id}/ordenes-produccion`, { method: 'POST' });
+          creationPath = 'line';
+        } catch (errLine: any) {
+          // Intentar interpretar errores esperados del backend
+          try {
+            const txt = String(errLine?.message || errLine || '');
+            const parsed = JSON.parse(txt);
+            if (parsed && parsed.code === 'MISSING_FORMULA') {
+              toast.error('La línea no tiene fórmula asociada (MISSING_FORMULA)');
+              setProdSubmitting(false);
+              return;
+            }
+            if (parsed && parsed.code === 'ALREADY_CREATED') {
+              toast.error('La línea ya tiene una orden creada (ALREADY_CREATED)');
+              setProdSubmitting(false);
+              return;
+            }
+          } catch (e) {
+            // no-op: no pudimos parsear JSON, continuar con fallback
+          }
+          // si el endpoint de línea falló por otra razón, seguiremos con creación general abajo
+        }
+      }
+
+      if (!createdResp) {
+        try {
+          createdResp = await apiFetch('/ordenes-produccion', { method: 'POST', body: JSON.stringify(payload) });
+          creationPath = 'general';
+        } catch (errPost) {
+          // si el endpoint no acepta el payload, fallback a la API helper existente
+          try {
+            createdResp = await createProduccion(formulaId, { cantidad: Number(prodCantidad), almacen_venta_id: Number(prodSelectedAlmacen) });
+            creationPath = 'helper';
+          } catch (err2) {
+            // última opción: rethrow
+            throw err2 ?? errPost;
+          }
+        }
+      }
+
+      toast.success('Producción creada');
+      // extraer id de la respuesta en varias formas posibles y actualizar UI según la ruta usada
+      try {
+        // Si la creación fue por endpoint de línea, el backend puede devolver { orden_produccion, linea_actualizada }
+        if (creationPath === 'line') {
+          const ordenObj = createdResp?.orden_produccion ?? createdResp?.orden ?? createdResp?.orden_produccion ?? null;
+          const linea = createdResp?.linea_actualizada ?? createdResp?.linea ?? createdResp?.linea_actual ?? null;
+          const ordenId = Number(ordenObj?.id ?? ordenObj?.orden_id ?? null) || null;
+          if (selectedPedido && prodLine) {
+            const updatedProductos = (selectedPedido.productos || []).map((p: any) => {
+              // preferir match por id de línea (linea.id), luego por producto+cantidad
+              if (linea && Number(linea.id) && Number(p.id) && Number(p.id) === Number(linea.id)) {
+                return { ...p, produccion_creada: true, orden_id: linea.orden_produccion_id ?? ordenId ?? p.orden_id ?? p.orden_produccion_id ?? null };
+              }
+              // fallback: si prodLine coincide con p según heurística previa
+              const matchLine = (a: any, b: any) => {
+                try {
+                  if (!a || !b) return false;
+                  if (a.id && b.id && Number(a.id) === Number(b.id)) return true;
+                  const aPid = a.producto_id ?? a.productoId ?? a.producto ?? a.producto_id;
+                  const bPid = b.producto_id ?? b.productoId ?? b.producto ?? b.producto_id;
+                  if (aPid && bPid && Number(aPid) === Number(bPid)) {
+                    const aq = Number(a.cantidad ?? a.qty ?? 0);
+                    const bq = Number(b.cantidad ?? b.qty ?? 0);
+                    if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
+                  }
+                  if (a.nombre && b.nombre && String(a.nombre) === String(b.nombre)) {
+                    const aq = Number(a.cantidad ?? a.qty ?? 0);
+                    const bq = Number(b.cantidad ?? b.qty ?? 0);
+                    if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
+                  }
+                  return false;
+                } catch (e) { return false; }
+              };
+              if (matchLine(p, prodLine)) {
+                return { ...p, produccion_creada: true, orden_id: linea?.orden_produccion_id ?? ordenId ?? p.orden_id ?? p.orden_produccion_id ?? null };
+              }
+              return p;
+            });
+            const newSelected = { ...selectedPedido, productos: updatedProductos };
+            setSelectedPedido(newSelected);
+            setPedidos((list) => (Array.isArray(list) ? list.map((pp: any) => (pp.id === newSelected.id ? { ...pp, productos: updatedProductos } : pp)) : list));
+          }
+        } else {
+          // creación general: createdResp puede ser la orden creada
+          const ordenId = Number(createdResp?.id ?? createdResp?.orden_id ?? createdResp?.orden?.id ?? null) || null;
+          if (selectedPedido && prodLine) {
+            const matchLine = (a: any, b: any) => {
+              try {
+                if (!a || !b) return false;
+                if (a.id && b.id && Number(a.id) === Number(b.id)) return true;
+                const aPid = a.producto_id ?? a.productoId ?? a.producto ?? a.producto_id;
+                const bPid = b.producto_id ?? b.productoId ?? b.producto ?? b.producto_id;
+                if (aPid && bPid && Number(aPid) === Number(bPid)) {
+                  const aq = Number(a.cantidad ?? a.qty ?? 0);
+                  const bq = Number(b.cantidad ?? b.qty ?? 0);
+                  if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
+                }
+                if (a.nombre && b.nombre && String(a.nombre) === String(b.nombre)) {
+                  const aq = Number(a.cantidad ?? a.qty ?? 0);
+                  const bq = Number(b.cantidad ?? b.qty ?? 0);
+                  if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
+                }
+                return false;
+              } catch (e) { return false; }
+            };
+
+            const updatedProductos = (selectedPedido.productos || []).map((p: any) => {
+              if (matchLine(p, prodLine)) {
+                return { ...p, produccion_creada: true, orden_id: ordenId ?? p.orden_id ?? p.ordenes_produccion_id ?? p.orden_produccion_id ?? null };
+              }
+              return p;
+            });
+            const newSelected = { ...selectedPedido, productos: updatedProductos };
+            setSelectedPedido(newSelected);
+            setPedidos((list) => (Array.isArray(list) ? list.map((pp: any) => (pp.id === newSelected.id ? { ...pp, productos: updatedProductos } : pp)) : list));
+          }
+        }
+      } catch (e) { console.debug('Error actualizando UI tras crear producción', e); }
+
+      setProdModalOpen(false);
+      // refrescar detalle abierto para que aparezcan las órdenes/componentes (opcional)
+      if (selectedPedido?.id) await openDetalle(selectedPedido.id);
+    } catch (err) {
+      console.error('Error creando producción desde pedido', err);
+      toast.error(parseApiError(err) || 'No se pudo crear la producción');
+    } finally {
+      setProdSubmitting(false);
+    }
+  }
   const makeClientUid = () => {
     try {
       // cross-env global crypto typings — runtime-guarded
@@ -637,6 +637,37 @@ export default function Pedidos() {
       }
     })();
   }, []);
+
+  // Cargar lista de productos para agregar (cuando se abre el modal)
+  const loadProductosOptions = async () => {
+    try {
+      const res = await getProductos();
+      const list = Array.isArray(res) ? res : (res?.data || res?.items || []);
+      setProductosOptions(list || []);
+    } catch (e) {
+      console.debug('Error cargando productos para selector', e);
+      setProductosOptions([]);
+    }
+  };
+
+  const loadPresentacionesForProduct = async (productId: number) => {
+    try {
+      const res = await getFormulas();
+      const list = Array.isArray(res) ? res : (res?.data || res?.items || []);
+      const matches = (list || []).filter((f: any) => Number(f.producto_terminado_id ?? f.producto_id) === Number(productId));
+      // Map to presentacion objects with id, nombre, precio_venta
+      const opts = matches.map((f: any) => ({ id: f.id, nombre: f.nombre ?? f.titulo ?? `#${f.id}`, precio_venta: f.precio_venta ?? f.precio ?? null }));
+      setPresentacionesOptions(opts);
+      // reset selection
+      setAddPresentacionId(opts.length > 0 ? opts[0].id : null);
+      setAddPrecio(opts.length > 0 ? (opts[0].precio_venta ?? null) : null);
+    } catch (e) {
+      console.debug('Error cargando presentaciones', e);
+      setPresentacionesOptions([]);
+      setAddPresentacionId(null);
+      setAddPrecio(null);
+    }
+  };
 
   const openDetalle = async (id: number) => {
     try {
@@ -886,6 +917,67 @@ export default function Pedidos() {
     }
   }
 
+  async function handleDeleteLineConfirmed() {
+    if (!selectedPedido?.id || !deleteLine?.id) return;
+    // Guard client-side: should not happen if button was disabled
+    const hasOrder = Boolean(deleteLine?.orden_produccion_id ?? deleteLine?.orden_id ?? deleteLine?.ordenes_produccion_id ?? deleteLine?.produccion_id ?? deleteLine?.produccionId);
+    const createdFlag = (deleteLine?.produccion_creada === true);
+    if (hasOrder || createdFlag) {
+      toast.error('No se puede eliminar: línea con orden de producción asociada');
+      setDeleteModalOpen(false);
+      return;
+    }
+    const ok = window.confirm('¿Eliminar línea? Esta acción no se puede deshacer.');
+    if (!ok) return;
+    setDeleteSubmitting(true);
+    try {
+      const endpoint = `/pedidos-venta/${selectedPedido.id}/lineas/${deleteLine.id}`;
+      const resp = await apiFetch(endpoint, { method: 'DELETE' });
+      // El backend devuelve el pedido actualizado en caso de éxito
+      if (resp) {
+        try {
+          // si resp parece ser el pedido actualizado
+          const updated = resp;
+          setSelectedPedido(updated);
+          // actualizar listado de pedidos también
+          setPedidos((list) => (Array.isArray(list) ? list.map((p: any) => (p.id === updated.id ? updated : p)) : list));
+        } catch (e) {
+          // fallback: recargar detalle
+          await openDetalle(selectedPedido.id);
+        }
+      } else {
+        await openDetalle(selectedPedido.id);
+      }
+      toast.success('Línea eliminada');
+      setDeleteModalOpen(false);
+      setDeleteLine(null);
+    } catch (err: any) {
+      console.error('Error eliminando línea', err);
+      const raw = String(err?.message || err || '').toLowerCase();
+      if (raw.includes('401') || raw.includes('token') || raw.includes('no autorizado') || raw.includes('unauthorized')) {
+        toast.error('No autorizado. Por favor inicia sesión.');
+        navigate('/login', { replace: true });
+        return;
+      }
+      // si el backend indica que no se puede borrar por orden asociada
+      if (raw.includes('orden') && (raw.includes('asociada') || raw.includes('already') || raw.includes('cannot'))) {
+        toast.error(parseApiError(err) || 'No se puede eliminar: línea con orden de producción asociada');
+        // refrescar estado del pedido en caso de cambio de concurrencia
+        try { await openDetalle(selectedPedido.id); } catch (e) { /* ignore */ }
+        return;
+      }
+      if (raw.includes('404') || raw.includes('no encontrada') || raw.includes('not found')) {
+        toast.error('Línea o pedido no encontrado. Refrescando vista.');
+        try { await openDetalle(selectedPedido.id); } catch (e) { /* ignore */ }
+        return;
+      }
+      const friendly = parseApiError(err) || (err?.message ?? 'Error eliminando la línea');
+      toast.error(friendly);
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  }
+
   return (
     <Layout>
       <div className="space-y-6 p-4">
@@ -970,7 +1062,7 @@ export default function Pedidos() {
 
         {/* Detalle del pedido en modal */}
         <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-    <DialogContent className="w-full max-w-6xl sm:max-w-5xl">
+    <DialogContent className="w-full max-w-6xl sm:max-w-5xl bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow-lg border border-slate-100">
             <DialogHeader>
               <DialogTitle>Detalle del pedido {selectedPedido?.id ?? ''}</DialogTitle>
               <DialogDescription>
@@ -990,6 +1082,12 @@ export default function Pedidos() {
                 <div>Cargando detalle...</div>
               ) : selectedPedido ? (
                 <div className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div />
+                    <div>
+                      <Button size="sm" variant="outline" onClick={async () => { await loadProductosOptions(); setAddProductId(null); setAddPresentacionId(null); setAddPrecio(null); setAddCantidad(1); setAddModalOpen(true); }}>Agregar producto</Button>
+                    </div>
+                  </div>
                   <div className="overflow-auto">
                     <table className="w-full table-auto text-sm">
                       <thead>
@@ -1012,7 +1110,7 @@ export default function Pedidos() {
                             </td>
                             <td className="py-2 align-top">
                               <div className="font-medium">{it.producto_nombre || it.nombre || '-'}</div>
-                              <div className="text-xs text-muted-foreground mt-1">
+                                <div className="text-xs text-muted-foreground mt-1">
                                 {(() => {
                                   // Mostrar componentes asociados a la línea (si vienen) y/o componentes de la orden de producción referenciada
                                   const compsFromLine = Array.isArray(it?.componentes) ? it.componentes.map((c: any) => {
@@ -1068,8 +1166,23 @@ export default function Pedidos() {
 
                                   // No hay componentes disponibles: mostrar botón para producir
                                   return (
-                                    <div className="mt-2">
+                                    <div className="mt-2 flex items-center gap-2">
                                       <Button size="sm" variant="outline" onClick={() => openProduceModalForLine(it)}>Producir</Button>
+                                      {/* Botón eliminar línea (solo si no tiene orden de producción asociada) */}
+                                      {(() => {
+                                        const hasOrder = Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
+                                        const createdFlag = (it?.produccion_creada === true);
+                                        const canDelete = !hasOrder && !createdFlag;
+                                        return (
+                                          <Button
+                                            size="sm"
+                                            variant="destructive"
+                                            onClick={(e) => { e.stopPropagation(); setDeleteLine(it); setDeleteModalOpen(true); }}
+                                            disabled={!canDelete}
+                                            title={canDelete ? 'Eliminar línea' : 'No se puede eliminar: orden de producción asociada'}
+                                          >Eliminar</Button>
+                                        );
+                                      })()}
                                     </div>
                                   );
                                 })()}
@@ -1370,6 +1483,123 @@ export default function Pedidos() {
               )}
             </div>
 
+            {/* Modal para agregar producto al pedido */}
+            <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
+              <DialogContent className="max-w-md bg-gradient-to-br from-white to-rose-50 rounded-lg shadow-lg border border-rose-100">
+                <DialogHeader>
+                  <DialogTitle>Agregar producto</DialogTitle>
+                  <DialogDescription>Agregar un nuevo producto a este pedido.</DialogDescription>
+                </DialogHeader>
+                <div className="p-2 space-y-3">
+                  <div>
+                    <label className="text-sm">Producto</label>
+                    <select className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addProductId ?? ''} onChange={async (e) => { const v = e.target.value ? Number(e.target.value) : null; setAddProductId(v); if (v) await loadPresentacionesForProduct(v); else { setPresentacionesOptions([]); setAddPresentacionId(null); setAddPrecio(null); } }}>
+                      <option value="">-- selecciona un producto --</option>
+                      {productosOptions.map((pr: any) => (
+                        <option key={pr.id} value={pr.id}>{pr.nombre ?? pr.name ?? pr.producto_nombre ?? `#${pr.id}`}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-sm">Presentación</label>
+                    <select className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addPresentacionId ?? ''} onChange={(e) => { const v = e.target.value ? Number(e.target.value) : null; setAddPresentacionId(v); const sel = presentacionesOptions.find((p) => Number(p.id) === Number(v)); setAddPrecio(sel ? (sel.precio_venta ?? null) : null); }}>
+                      <option value="">-- selecciona presentación --</option>
+                      {presentacionesOptions.map((pr: any) => (
+                        <option key={pr.id} value={pr.id}>{pr.nombre ?? `#${pr.id}`} {pr.precio_venta ? ` — ${pr.precio_venta}` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-sm">Cantidad</label>
+                    <input type="number" min={0.01} step={0.01} className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addCantidad} onChange={(e) => setAddCantidad(Number(String(e.target.value).replace(',', '.')))} />
+                  </div>
+                  <div>
+                    <label className="text-sm">Precio unitario (desde presentación)</label>
+                    <input type="number" readOnly className="w-full mt-1 border rounded px-2 py-1 bg-gray-100" value={(addPrecio !== null && addPrecio !== undefined) ? addPrecio : ''} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setAddModalOpen(false)} disabled={addSubmitting} className="hover:bg-rose-50">Cancelar</Button>
+                  <Button disabled={addSubmitting} onClick={async () => {
+                    if (!selectedPedido?.id) return;
+                    if ((selectedPedido?.estado || '').toString().toLowerCase() === 'completado' || (selectedPedido?.estado || '').toString().toLowerCase() === 'cancelado') {
+                      toast.error('No se pueden agregar líneas a un pedido completado o cancelado');
+                      return;
+                    }
+                    if (!addProductId) { toast.error('Seleccione un producto'); return; }
+                    if (!addCantidad || Number(addCantidad) <= 0) { toast.error('Ingrese una cantidad válida'); return; }
+                    // Si se seleccionó presentación, validar pertenece al producto
+                    if (addPresentacionId) {
+                      const ok = presentacionesOptions.find((p) => Number(p.id) === Number(addPresentacionId));
+                      if (!ok) { toast.error('La presentación seleccionada no pertenece al producto'); return; }
+                    }
+                    setAddSubmitting(true);
+                    const line: any = { producto_id: Number(addProductId), cantidad: Number(addCantidad) };
+                    if (addPresentacionId) line.formula_id = Number(addPresentacionId);
+                    // incluir precio_unitario si fue seleccionado desde la presentación
+                    if (addPrecio !== null && addPrecio !== undefined) line.precio_venta = Number(addPrecio);
+                    // mapear presentación/tamaño si aplica (tamano_id puede ser distinto dependiendo del backend)
+                    if (addPresentacionId) line.tamano_id = Number(addPresentacionId);
+                    // incluir snapshot nombre_producto para mayor compatibilidad (opcional)
+                    try {
+                      const prod = productosOptions.find((p: any) => Number(p.id) === Number(addProductId));
+                      if (prod && (prod.nombre || prod.name || prod.producto_nombre)) line.nombre_producto = prod.nombre ?? prod.name ?? prod.producto_nombre;
+                    } catch (e) { /* ignore */ }
+                    const payload = { productos: [ line ] };
+                    try {
+                      console.debug('ADD-PEDIDO request', { endpoint: `/pedidos-venta/${selectedPedido.id}/items`, payload });
+                      await apiFetch(`/pedidos-venta/${selectedPedido.id}/items`, { method: 'POST', body: JSON.stringify(payload) });
+                      toast.success('Producto agregado');
+                      setAddModalOpen(false);
+                      await openDetalle(selectedPedido.id);
+                    } catch (err: any) {
+                      console.error('Error agregando producto al pedido', err);
+                      // Si el backend falla por ausencia de columna producto_id, reintentar con producto_terminado_id
+                      const raw = String(err?.message || err || '').toLowerCase();
+                      if (raw.includes('column "producto_id" does not exist') || raw.includes('column \"producto_id\" does not exist') || raw.includes('producto_id')) {
+                        try {
+                          const altLine: any = { cantidad: Number(addCantidad) };
+                          // usar producto_terminado_id como fallback para tablas que nombran la columna así
+                          altLine.producto_terminado_id = Number(addProductId);
+                          if (addPresentacionId) altLine.formula_id = Number(addPresentacionId);
+                          const altPayload = { productos: [altLine] };
+                          console.debug('ADD-PEDIDO retry with producto_terminado_id', { endpoint: `/pedidos-venta/${selectedPedido.id}/items`, altPayload });
+                          await apiFetch(`/pedidos-venta/${selectedPedido.id}/items`, { method: 'POST', body: JSON.stringify(altPayload) });
+                          toast.success('Producto agregado (fallback producto_terminado_id)');
+                          setAddModalOpen(false);
+                          await openDetalle(selectedPedido.id);
+                        } catch (err2: any) {
+                          console.error('Fallback adding product also failed', err2);
+                          const friendly = parseApiError(err2) || (err2?.message ?? 'No se pudo agregar el producto (fallback)');
+                          toast.error(friendly);
+                        } finally {
+                          setAddSubmitting(false);
+                        }
+                        return;
+                      }
+
+                      // intentar extraer mensaje JSON si existe
+                      let friendly = parseApiError(err) || (err?.message ?? 'No se pudo agregar el producto');
+                      try {
+                        const txt = String(err?.message || err || '');
+                        const parsed = JSON.parse(txt);
+                        if (parsed && parsed.error) friendly = parsed.error;
+                      } catch (e) {
+                        // noop
+                      }
+                      // Si el error advierte sobre migraciones o columnas faltantes, añadir hint
+                      if (raw.includes('column') && raw.includes('does not exist')) {
+                        friendly += '. Posible esquema desactualizado: ejecutar migraciones en backend.';
+                      }
+                      toast.error(friendly);
+                    } finally {
+                      setAddSubmitting(false);
+                    }
+                  }} className="bg-rose-600 hover:bg-rose-700 text-white">{addSubmitting ? 'Enviando...' : 'Agregar'}</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
             {/* Formulario de registro de pago embebido en el detalle del pedido (se muestra dentro del dialog) */}
             {selectedPedido && showPaymentInline && (
               <div className="mt-4 p-0">
@@ -1399,7 +1629,7 @@ export default function Pedidos() {
                           return;
                         }
                         setShowPaymentInline(true);
-                      }} disabled={selectedPedido?.estado === 'Cancelado' || isPedidoPaid(selectedPedido) || hasPendingProductionLines(selectedPedido)}>
+                      }} disabled={selectedPedido?.estado === 'Cancelado' || isPedidoPaid(selectedPedido) || hasPendingProductionLines(selectedPedido)} className="bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white">
                         Registrar pago y completar
                       </Button>
                     {selectedPedido?.estado === 'Completado' && (
@@ -1412,7 +1642,7 @@ export default function Pedidos() {
                   </Button>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={handleCancelarPedido} disabled={canceling || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado'}>
+                  <Button variant="outline" onClick={handleCancelarPedido} disabled={canceling || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado'} className="hover:bg-slate-50">
                     {canceling ? 'Procesando...' : 'Cancelar pedido'}
                   </Button>
                   <Button variant="ghost" onClick={closeDetalle}>Cerrar</Button>
@@ -1421,9 +1651,26 @@ export default function Pedidos() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Modal de confirmación para eliminar línea */}
+        <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+          <DialogContent className="max-w-md bg-white rounded-lg shadow-lg border">
+            <DialogHeader>
+              <DialogTitle>Eliminar línea</DialogTitle>
+              <DialogDescription>Confirme la eliminación de la línea del pedido. Esta acción no se puede deshacer.</DialogDescription>
+            </DialogHeader>
+            <div className="p-2">
+              <div className="text-sm">{deleteLine ? `${deleteLine.producto_nombre || deleteLine.nombre || 'Línea #' + deleteLine.id}` : '¿Eliminar esta línea?'} </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setDeleteModalOpen(false); setDeleteLine(null); }} disabled={deleteSubmitting}>Cancelar</Button>
+              <Button variant="destructive" onClick={handleDeleteLineConfirmed} disabled={deleteSubmitting}>{deleteSubmitting ? 'Eliminando...' : 'Eliminar'}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         {/* Modal para producir desde una línea del pedido */}
         <Dialog open={prodModalOpen} onOpenChange={setProdModalOpen}>
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-w-lg bg-gradient-to-br from-white to-emerald-50 rounded-lg shadow-lg border border-emerald-100">
             <DialogHeader>
               <DialogTitle>Producir</DialogTitle>
               <DialogDescription>Crear producción a partir de la fórmula asociada a la línea.</DialogDescription>
@@ -1440,7 +1687,7 @@ export default function Pedidos() {
                   readOnly
                   aria-readonly="true"
                   value={prodCantidad.toFixed(2)}
-                  className="w-full mt-1 border rounded px-2 py-1 bg-gray-100"
+                  className="w-full mt-1 border rounded px-2 py-1 bg-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                 />
                 
               </div>
@@ -1462,7 +1709,7 @@ export default function Pedidos() {
                             type="number"
                             min={0.01}
                             step={0.01}
-                            className="w-24 text-right border rounded px-2 py-1"
+                            className="w-24 text-right border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                             value={(Number(c.cantidad_editable ?? 0)).toFixed(2)}
                             onChange={(e) => {
                               const raw = String(e.target.value).replace(',', '.');
@@ -1493,8 +1740,8 @@ export default function Pedidos() {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setProdModalOpen(false)}>Cancelar</Button>
-              <Button disabled={prodSubmitting} onClick={handleProduceFromLine}>{prodSubmitting ? 'Generando...' : 'Producir'}</Button>
+              <Button variant="outline" onClick={() => setProdModalOpen(false)} className="hover:bg-emerald-50">Cancelar</Button>
+              <Button disabled={prodSubmitting} onClick={handleProduceFromLine} className="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white">{prodSubmitting ? 'Generando...' : 'Producir'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
