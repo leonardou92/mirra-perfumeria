@@ -161,20 +161,53 @@ export default function Usuarios() {
     }
   }
 
+  function resolveUserId(u: any): number | null {
+    if (!u) return null;
+    try {
+      if (typeof u === 'number') return Number(u);
+      if (typeof u === 'string') {
+        const n = Number(u);
+        return Number.isFinite(n) ? n : null;
+      }
+      const cand = u.id ?? u.usuario_id ?? u.user_id ?? u.sub ?? null;
+      const n = cand !== null && cand !== undefined ? Number(cand) : null;
+      return Number.isFinite(n) ? n : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   async function loadPermisosFor(user: any) {
-    if (!user?.id) return;
+    const uid = resolveUserId(user);
+    if (!uid) {
+      alert('ID de usuario inválido para cargar permisos');
+      return;
+    }
     setPermLoading(true);
     try {
       // GET /api/users/:id/modulos (según documentación)
-      const data = await apiFetch(`/users/${user.id}/modulos`);
+      const data = await apiFetch(`/users/${uid}/modulos`);
       // API puede devolver { modulos: {...}, available_modulos: [...] }
       if (data && typeof data === 'object' && data.modulos) {
-        setPermisos(data.modulos || {});
+        let p = data.modulos || {};
+        if (Array.isArray(p)) {
+          const map: any = {};
+          for (const k of p) map[k] = true;
+          p = map;
+        }
+        setPermisos(p);
         if (Array.isArray(data.available_modulos) && data.available_modulos.length > 0) setAvailableModules(data.available_modulos as any);
       } else {
-        setPermisos(data || {});
+        let p = data || {};
+        if (Array.isArray(p)) {
+          const map: any = {};
+          for (const k of p) map[k] = true;
+          p = map;
+        }
+        setPermisos(p);
       }
-      setSelectedUser(user);
+      // keep selectedUser as the original object for display but store resolved id where needed
+      setSelectedUser({ ...(user || {}), id: uid });
       setPermisosModalOpen(true);
     } catch (e: any) {
       console.error('Error cargando permisos', e);
@@ -188,7 +221,7 @@ export default function Usuarios() {
           // ignore
         }
         setPermisos({});
-        setSelectedUser(user);
+        setSelectedUser({ ...(user || {}), id: uid });
         setPermisosModalOpen(true);
       } else if ((e as any)?.status === 401 || (e as any)?.status === 403) {
         alert('No autorizado para ver/editar permisos. Revisa tus credenciales.');
@@ -204,24 +237,49 @@ export default function Usuarios() {
     if (!selectedUser) return;
     try {
       const payload = { ...permisos };
-      try {
-        const res = await apiFetch(`/users/${selectedUser.id}/modulos`, { method: 'POST', body: JSON.stringify(payload) });
-        if (res) setPermisos(res as any);
-        alert('Permisos guardados');
-        setPermisosModalOpen(false);
-        return;
-      } catch (e: any) {
-        if ((e as any)?.status === 403) {
+      const endpoints = [`/users/${selectedUser.id}/modulos`, `/users/${selectedUser.id}/modules`];
+
+      // Prefer PUT (upsert) as recommended by backend docs, fallback to POST if PUT not supported.
+      let saved: any = null;
+      let lastError: any = null;
+      for (const ep of endpoints) {
+        try {
+          // Try PUT first
+          saved = await apiFetch(ep, { method: 'PUT', body: JSON.stringify(payload) });
+          break;
+        } catch (errPut: any) {
+          lastError = errPut;
+          // If PUT failed with 405 Method Not Allowed or 404, try POST
+          try {
+            saved = await apiFetch(ep, { method: 'POST', body: JSON.stringify(payload) });
+            break;
+          } catch (errPost: any) {
+            lastError = errPost;
+            // continue to next endpoint
+          }
+        }
+      }
+
+      if (!saved) {
+        if (lastError && (lastError as any).status === 403) {
           alert('No autorizado: necesitas permisos de administrador para asignar módulos.');
           return;
         }
-        // Fallback a PUT por compatibilidad
-        const res2 = await apiFetch(`/users/${selectedUser.id}/modulos`, { method: 'PUT', body: JSON.stringify(payload) });
-        if (res2) setPermisos(res2 as any);
-        alert('Permisos actualizados');
-        setPermisosModalOpen(false);
-        return;
+        throw lastError || new Error('No se pudo guardar permisos');
       }
+
+      // Response puede venir como { modulos: {...}, available_modulos: [...] } o directamente el objeto de modulos
+      let newPerms = (saved && saved.modulos) ? saved.modulos : saved;
+      if (Array.isArray(newPerms)) {
+        const map: any = {};
+        for (const k of newPerms) map[k] = true;
+        newPerms = map;
+      }
+      setPermisos(newPerms || {});
+      try { localStorage.setItem('user_permissions', JSON.stringify(newPerms || {})); } catch (e) { /* noop */ }
+      alert('Permisos guardados');
+      setPermisosModalOpen(false);
+      return;
     } catch (e: any) {
       console.error(e);
       alert('Error guardando permisos: ' + (e?.message || e));

@@ -38,17 +38,45 @@ export function usePermissions() {
      * @param userId - ID del usuario
      */
     const loadUserPermissions = async (userId: number | string) => {
-        if (!userId) {
+        // Normalizar id: aceptar objetos o strings que contengan el id
+        let uid: number | null = null;
+        try {
+            if (userId === undefined || userId === null) {
+                uid = null;
+            } else {
+                // si nos pasaron un objeto accidentalmente, intentar extraer
+                if (typeof userId === 'object') {
+                    // @ts-ignore
+                    const cand = (userId as any).id ?? (userId as any).usuario_id ?? (userId as any).user_id ?? null;
+                    uid = cand !== null && cand !== undefined ? Number(cand) : null;
+                } else {
+                    uid = Number(userId);
+                }
+                if (!Number.isFinite(uid)) uid = null;
+            }
+        } catch (e) {
+            uid = null;
+        }
+
+        if (!uid) {
+            // id inválido -> no llamar al endpoint
             setPermissions({});
             return;
         }
 
         setLoading(true);
         try {
-            const data = await apiFetch(`/users/${userId}/modulos`);
+            const data = await apiFetch(`/users/${uid}/modulos`);
 
             // El backend puede devolver { modulos: {...} } o directamente {...}
-            const perms: UserPermissions = data?.modulos || data || {};
+            let permsRaw: any = data?.modulos || data || {};
+            // Si el backend devuelve un array de módulos permitidos, convertir a objeto { key: true }
+            if (Array.isArray(permsRaw)) {
+                const mapped: any = {};
+                for (const k of permsRaw) mapped[k] = true;
+                permsRaw = mapped;
+            }
+            const perms: UserPermissions = permsRaw;
 
             // Guardar en estado y localStorage
             setPermissions(perms);
