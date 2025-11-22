@@ -294,15 +294,7 @@ export default function Usuarios() {
             </div>
           </div>
 
-          <div>
-            <div className="bg-white border rounded p-4">
-              <div className="font-medium mb-2">Acciones</div>
-              <div className="text-sm text-muted-foreground">Usa los botones de la lista para abrir los modales de editar usuario o editar permisos.</div>
-              <div className="mt-4">
-                {selectedUser && <div className="text-sm">Usuario seleccionado: {selectedUser.nombre || selectedUser.email || selectedUser.id}</div>}
-              </div>
-            </div>
-          </div>
+         
         </div>
         {/* Modal: Crear / Editar usuario */}
         <Dialog open={userModalOpen} onOpenChange={setUserModalOpen}>
