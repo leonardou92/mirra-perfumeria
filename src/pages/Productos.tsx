@@ -30,6 +30,8 @@ import { toast } from "sonner";
 import { parseApiError } from '@/lib/utils';
 import { createProducto, updateProducto } from "@/integrations/api";
 import ImageUpload from "@/components/ImageUpload";
+// Category and brand selects (no CRUD) - cargamos listas desde API
+import { getCategorias, getMarcas, getFormulas } from '@/integrations/api';
 import {
   AlertDialog,
   AlertDialogContent,
@@ -50,6 +52,7 @@ export default function Productos() {
   const [editingProduct, setEditingProduct] = useState<any | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [productDetalle, setProductDetalle] = useState<any | null>(null);
+  const [productFormula, setProductFormula] = useState<any | null>(null);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
   const [alertOpen, setAlertOpen] = useState(false);
@@ -71,17 +74,26 @@ export default function Productos() {
   const [assignMotivo, setAssignMotivo] = useState<string>("");
   const [assignReferencia, setAssignReferencia] = useState<string>("");
   const [assignLoading, setAssignLoading] = useState(false);
+  
   const form = useForm({
     defaultValues: {
       nombre: "",
-      tipo: "MateriaPrima",
       unidad: "unidad",
       stock: 0,
       costo: 0,
       precio_venta: 0,
       proveedor_id: null,
+      categoria_id: null,
+      marca_id: null,
     },
   });
+
+  const [categoriaId, setCategoriaId] = useState<number | null>(null);
+  const [marcaId, setMarcaId] = useState<number | null>(null);
+  const [categorias, setCategorias] = useState<any[]>([]);
+  const [marcas, setMarcas] = useState<any[]>([]);
+  const [categoriasMap, setCategoriasMap] = useState<Record<number, string>>({});
+  const [marcasMap, setMarcasMap] = useState<Record<number, string>>({});
 
   useEffect(() => {
     getProductos()
@@ -90,12 +102,68 @@ export default function Productos() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Cargar categorías y marcas al montar para poder mostrar nombres en el listado
+  useEffect(() => {
+    (async () => {
+      try {
+        const c = await getCategorias();
+        const list = Array.isArray(c) ? c : (c?.data || []);
+        setCategorias(list);
+        const cmap: Record<number, string> = {};
+        list.forEach((it: any) => { if (it && it.id !== undefined) cmap[Number(it.id)] = it.nombre; });
+        setCategoriasMap(cmap);
+      } catch (e) {
+        setCategorias([]);
+      }
+      try {
+        const m = await getMarcas();
+        const mlist = Array.isArray(m) ? m : (m?.data || []);
+        setMarcas(mlist);
+        const mmap: Record<number, string> = {};
+        mlist.forEach((it: any) => { if (it && it.id !== undefined) mmap[Number(it.id)] = it.nombre; });
+        setMarcasMap(mmap);
+      } catch (e) {
+        setMarcas([]);
+      }
+    })();
+  }, []);
+
   // Initialize image state when dialog opens (create/edit)
   useEffect(() => {
     if (isOpen) {
       // Inicializar la URL de imagen con la existente del producto (si la tiene).
       // Soportar ambas propiedades por si la API usa `image_url` o `imagen_url`.
       setImageUrl(editingProduct?.imagen_url ?? editingProduct?.image_url ?? null);
+      // inicializar categoria/marca
+      setCategoriaId(editingProduct?.categoria_id ?? null);
+      setMarcaId(editingProduct?.marca_id ?? null);
+      // cargar categorías disponibles cuando se abre el modal
+      (async () => {
+        try {
+          const list = await getCategorias();
+          setCategorias(Array.isArray(list) ? list : (list?.data || []));
+        } catch (e) {
+          console.error('Error cargando categorias', e);
+          setCategorias([]);
+        }
+        try {
+          const m = await getMarcas();
+          setMarcas(Array.isArray(m) ? m : (m?.data || []));
+        } catch (e) {
+          console.error('Error cargando marcas', e);
+          setMarcas([]);
+        }
+        // Si estamos editando un producto, también pre-cargar almacenes para poder asignar existencia desde el modal
+        if (editingProduct) {
+          try {
+            const a = await getAlmacenes();
+            setAlmacenes(Array.isArray(a) ? a : []);
+          } catch (e) {
+            console.warn('No se pudieron cargar almacenes al abrir modal de producto', e);
+            setAlmacenes([]);
+          }
+        }
+      })();
     }
   }, [isOpen, editingProduct]);
 
@@ -107,16 +175,13 @@ export default function Productos() {
     const term = searchTerm.toLowerCase();
     return (
       (product.nombre || "").toLowerCase().includes(term) ||
-      (product.tipo || "").toLowerCase().includes(term)
+      false
     );
   });
 
   async function onSubmit(values: any) {
     try {
-      // Normalizar 'tipo' a los valores que suele aceptar la API
-      let tipo = (values.tipo || "").toString().trim();
-      if (/materia/i.test(tipo)) tipo = "MateriaPrima";
-      else if (/producto/i.test(tipo)) tipo = "ProductoTerminado";
+      // Nota: el campo `tipo` fue removido del formulario.
 
       // El campo 'stock' no es editable desde el formulario. Para ediciones usamos el stock actual del producto
       // derivado del inventario por almacén (productDetalle) si está disponible, o del campo editingProduct.stock.
@@ -139,13 +204,14 @@ export default function Productos() {
 
       const payload = {
         nombre: (values.nombre || "").toString(),
-        tipo,
         unidad: (values.unidad || "").toString(),
         stock: Number.isNaN(stock) ? 0 : stock,
         costo: Number.isNaN(costo) ? null : costo,
         precio_venta: Number.isNaN(precio_venta) ? null : precio_venta,
         proveedor_id: Number.isNaN(proveedor_id) ? null : proveedor_id,
-        imagen_url: imageUrl || null, // Changed from image_url to imagen_url to match your API
+        image_url: imageUrl || null,
+        categoria_id: categoriaId ?? null,
+        marca_id: marcaId ?? null,
       };
       console.log("Creando/actualizando producto, payload:", payload);
       if (editingProduct) {
@@ -168,6 +234,17 @@ export default function Productos() {
     }
   }
 
+  // Asegurar que al abrir el modal en modo 'nuevo' el formulario esté vacío.
+  useEffect(() => {
+    if (isOpen && !editingProduct) {
+      form.reset({ nombre: '', unidad: 'unidad', stock: 0, costo: 0, precio_venta: 0, proveedor_id: null, categoria_id: null, marca_id: null });
+      setImageUrl(null);
+      setCategoriaId(null);
+      setMarcaId(null);
+      setProductDetalle(null);
+    }
+  }, [isOpen, editingProduct]);
+
   // Handle image upload from the ImageUpload component
   const handleImageUpload = async (url: string) => {
     setImageUrl(url);
@@ -179,9 +256,6 @@ export default function Productos() {
         const values = form.getValues();
 
         // Reconstruir payload siguiendo la lógica de onSubmit
-        let tipo = (values.tipo ?? editingProduct.tipo ?? '').toString().trim();
-        if (/materia/i.test(tipo)) tipo = 'MateriaPrima';
-        else if (/producto/i.test(tipo)) tipo = 'ProductoTerminado';
 
         // El campo stock no es editable: usar stock derivado de productDetalle/inventario o editingProduct.stock
         let stock: number;
@@ -192,24 +266,25 @@ export default function Productos() {
           stock = Number(editingProduct.stock ?? 0);
         }
 
-        const costoRaw = values.costo !== undefined && values.costo !== null && values.costo !== '' ? values.costo : (editingProduct.costo ?? null);
+        const costoRaw = values.costo !== undefined && values.costo !== null ? values.costo : (editingProduct?.costo ?? null);
         const costo = costoRaw !== null ? Number(costoRaw) : null;
 
-        const precioRaw = values.precio_venta !== undefined && values.precio_venta !== null && values.precio_venta !== '' ? values.precio_venta : (editingProduct.precio_venta ?? null);
+        const precioRaw = values.precio_venta !== undefined && values.precio_venta !== null ? values.precio_venta : (editingProduct?.precio_venta ?? null);
         const precio_venta = precioRaw !== null ? Number(precioRaw) : null;
 
-        const proveedorRaw = values.proveedor_id !== undefined && values.proveedor_id !== null && values.proveedor_id !== '' ? values.proveedor_id : (editingProduct.proveedor_id ?? null);
+        const proveedorRaw = values.proveedor_id !== undefined && values.proveedor_id !== null ? values.proveedor_id : (editingProduct?.proveedor_id ?? null);
         const proveedor_id = proveedorRaw !== null ? Number(proveedorRaw) : null;
 
         const payload = {
           nombre: (values.nombre ?? editingProduct.nombre ?? '').toString(),
-          tipo,
           unidad: (values.unidad ?? editingProduct.unidad ?? '').toString(),
           stock: Number.isNaN(stock) ? 0 : stock,
           costo: Number.isNaN(costo as number) ? null : costo,
           precio_venta: Number.isNaN(precio_venta as number) ? null : precio_venta,
           proveedor_id: Number.isNaN(proveedor_id as number) ? null : proveedor_id,
-          imagen_url: url,
+          image_url: url,
+          categoria_id: categoriaId ?? (editingProduct?.categoria_id ?? null),
+          marca_id: marcaId ?? (editingProduct?.marca_id ?? null),
         };
 
         const updated = await updateProducto(editingProduct.id, payload);
@@ -278,6 +353,11 @@ export default function Productos() {
 
   // Abrir modal de asignar almacén: cargar almacenes si es necesario
   async function openAssignModal() {
+    // Reset modal state to avoid using stale seleccion/valores
+    setSelectedAlmacenId(null);
+    setAssignCantidad(0);
+    setAssignMotivo('');
+    setAssignReferencia('');
     setAssignOpen(true);
     setAlmacenes([]);
     try {
@@ -288,10 +368,21 @@ export default function Productos() {
       const msg = parseApiError(err) || 'No se pudieron cargar los almacenes';
       toast.error(msg);
     }
+
+    // If we have a viewStockProduct selected, refresh its detail to ensure inventory is current
+    try {
+      if (viewStockProduct && viewStockProduct.id) {
+        const fresh = await getProducto(viewStockProduct.id);
+        setViewStockDetalle(fresh);
+      }
+    } catch (e) {
+      console.warn('No se pudo recargar detalle del producto al abrir asignar modal', e);
+    }
   }
 
   async function handleAssignSubmit() {
-    const productId = (viewStockDetalle?.id) || (viewStockProduct?.id) || (editingProduct?.id);
+    // Prefer explicit viewStockProduct (clicked product), otherwise use detail or editingProduct
+    const productId = viewStockProduct?.id ?? viewStockDetalle?.id ?? editingProduct?.id;
     if (!productId) {
       toast.error('Producto no seleccionado');
       return;
@@ -334,6 +425,8 @@ export default function Productos() {
     }
   }
 
+  
+
   return (
     <Layout>
       <div className="space-y-6">
@@ -345,14 +438,27 @@ export default function Productos() {
           <div className="flex items-center gap-2">
             <a href="/docs/inventario-produccion.txt" target="_blank" rel="noreferrer" className="text-sm text-muted-foreground underline">Docs: Inventario/Producción</a>
           </div>
-          <Dialog open={isOpen} onOpenChange={setIsOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2" variant="default">
-                <Plus className="h-4 w-4" />
-                Nuevo Producto
-              </Button>
-            </DialogTrigger>
+          <div>
+            <Button
+              className="gap-2"
+              variant="default"
+              onClick={() => {
+                // Asegurar que al crear un nuevo producto el formulario esté en blanco
+                setEditingProduct(null);
+                form.reset();
+                setImageUrl(null);
+                setCategoriaId(null);
+                setMarcaId(null);
+                setProductDetalle(null);
+                setIsOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" />
+              Nuevo Producto
+            </Button>
+          </div>
 
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogContent className="max-w-4xl">
               <DialogHeader>
                 <DialogTitle>{editingProduct ? 'Editar' : 'Nuevo'} Producto</DialogTitle>
@@ -377,25 +483,19 @@ export default function Productos() {
 
                         <div className="grid grid-cols-2 gap-4">
                           <FormItem>
-                            <FormLabel>Tipo</FormLabel>
+                            <FormLabel>Unidad</FormLabel>
                             <FormControl>
                               <select
                                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                {...form.register("tipo", { required: true })}
+                                {...form.register("unidad", { required: true })}
                               >
-                                <option value="MateriaPrima">Materia Prima</option>
-                                <option value="ProductoTerminado">Producto Terminado</option>
+                                <option value="unidad">unidad</option>
+                                <option value="kg">kg</option>
+                                <option value="g">g</option>
+                                <option value="litro">litro</option>
+                                <option value="ml">ml</option>
+                                <option value="m">m</option>
                               </select>
-                            </FormControl>
-                          </FormItem>
-
-                          <FormItem>
-                            <FormLabel>Unidad</FormLabel>
-                            <FormControl>
-                              <Input 
-                                placeholder="Ej: unidad, kg, litro" 
-                                {...form.register("unidad", { required: true })} 
-                              />
                             </FormControl>
                           </FormItem>
                         </div>
@@ -446,16 +546,40 @@ export default function Productos() {
                           </FormItem>
                         </div>
 
-                        <FormItem>
-                          <FormLabel>Proveedor ID</FormLabel>
-                          <FormControl>
-                            <Input 
-                              type="number" 
-                              placeholder="Opcional"
-                              {...form.register("proveedor_id", { valueAsNumber: true })} 
-                            />
-                          </FormControl>
-                        </FormItem>
+                        {/* Proveedor se mantiene en payload pero no es visible en el formulario */}
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <FormLabel>Categoría</FormLabel>
+                            <FormControl>
+                              <select
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                value={categoriaId ?? ''}
+                                onChange={(e) => setCategoriaId(e.target.value ? Number(e.target.value) : null)}
+                              >
+                                <option value="">-- Sin categoría --</option>
+                                {categorias.map((c) => (
+                                  <option key={c.id} value={c.id}>{c.nombre}</option>
+                                ))}
+                              </select>
+                            </FormControl>
+                          </div>
+                          <div>
+                            <FormLabel>Marca</FormLabel>
+                            <FormControl>
+                              <select
+                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                value={marcaId ?? ''}
+                                onChange={(e) => setMarcaId(e.target.value ? Number(e.target.value) : null)}
+                              >
+                                <option value="">-- Sin marca --</option>
+                                {marcas.map((m) => (
+                                  <option key={m.id} value={m.id}>{m.nombre}</option>
+                                ))}
+                              </select>
+                            </FormControl>
+                          </div>
+                        </div>
                       </div>
 
                       {/* Columna Derecha - Imagen */}
@@ -477,7 +601,7 @@ export default function Productos() {
                           </div>
                         </FormItem>
                         {/* Inventario por almacén (solo en modo edición) */}
-                        {editingProduct && (
+                        {editingProduct && ( <>
                           <div className="col-span-2 mt-4">
                             <h4 className="text-sm font-semibold mb-2">Inventario por almacén</h4>
                             {loadingDetalle ? (
@@ -519,7 +643,27 @@ export default function Productos() {
                               })()
                             )}
                           </div>
-                        )}
+                          {/* Añadir existencia: abrir modal separado */}
+                          <div className="col-span-2 mt-4">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <div className="text-sm font-medium">Agregar existencia</div>
+                                <div className="text-xs text-muted-foreground">Abrir modal separado para agregar existencia al producto</div>
+                              </div>
+                              <div>
+                                <Button type="button" size="sm" variant="outline" onClick={() => {
+                                  // Preparar campos y abrir el modal de asignación existente
+                                  setSelectedAlmacenId(null);
+                                  setAssignCantidad(0);
+                                  setAssignMotivo('');
+                                  setAssignReferencia('');
+                                  setViewStockProduct(editingProduct);
+                                  openAssignModal();
+                                }}>Agregar existencia</Button>
+                              </div>
+                            </div>
+                          </div>
+                        </>)}
                       </div>
                     </div>
 
@@ -581,12 +725,13 @@ export default function Productos() {
                     <TableHead>ID</TableHead>
                     <TableHead>Imagen</TableHead>
                     <TableHead>Nombre</TableHead>
-                    <TableHead>Tipo</TableHead>
+                    {/* Tipo eliminado */}
                     <TableHead>Unidad</TableHead>
+                    <TableHead>Categoría</TableHead>
+                    <TableHead>Marca</TableHead>
                     <TableHead>Stock</TableHead>
                     <TableHead>Costo</TableHead>
                     <TableHead>Precio Venta</TableHead>
-                    <TableHead>Proveedor</TableHead>
                     <TableHead className="text-right">Acciones</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -605,16 +750,26 @@ export default function Productos() {
                         </div>
                       </TableCell>
                       <TableCell className="font-medium">{product.nombre}</TableCell>
-                      <TableCell>{product.tipo}</TableCell>
+                      {/* campo tipo eliminado */}
                       <TableCell>{product.unidad}</TableCell>
+                      <TableCell>{product.categoria_nombre ?? categoriasMap[product.categoria_id] ?? '-'}</TableCell>
+                      <TableCell>{product.marca_nombre ?? marcasMap[product.marca_id] ?? '-'}</TableCell>
                       <TableCell>
-                        <span className={product.stock && product.stock < 20 ? "text-destructive font-semibold" : ""}>
-                          {product.stock}
-                        </span>
+                        {(() => {
+                          const inv = (product?.inventario) || [];
+                          const totalDisponible = Array.isArray(inv) && inv.length > 0
+                            ? inv.reduce((s: number, it: any) => s + (Number(it.stock_disponible || 0)), 0)
+                            : Number(product?.stock || 0);
+                          const warn = totalDisponible < 20;
+                          return (
+                            <span className={warn ? "text-destructive font-semibold" : ""}>
+                              {Number(totalDisponible).toLocaleString('es-AR')}
+                            </span>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell>{product.costo ?? "-"}</TableCell>
                       <TableCell>{product.precio_venta ?? "-"}</TableCell>
-                      <TableCell>{product.proveedor_id ?? "-"}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                          
@@ -626,25 +781,42 @@ export default function Productos() {
                               setEditingProduct(product);
                               form.reset({
                                 nombre: product.nombre,
-                                tipo: product.tipo,
                                 unidad: product.unidad,
                                 // stock no se setea porque no es editable en el formulario
                                 costo: product.costo,
                                 precio_venta: product.precio_venta,
                                 proveedor_id: product.proveedor_id,
+                                categoria_id: product.categoria_id ?? null,
+                                marca_id: product.marca_id ?? null,
                               });
+                              setCategoriaId(product.categoria_id ?? null);
+                              setMarcaId(product.marca_id ?? null);
                               setIsOpen(true);
                               // cargar detalle completo (incluye inventario por almacén)
                               setLoadingDetalle(true);
                               setProductDetalle(null);
+                              setProductFormula(null);
                               getProducto(product.id)
                                 .then((d) => setProductDetalle(d))
                                 .catch((e) => { console.error('Error cargando detalle producto:', e); toast.error('No se pudo cargar inventario'); })
                                 .finally(() => setLoadingDetalle(false));
+
+                              // Cargar fórmulas y buscar la que corresponde a este producto terminado
+                              (async () => {
+                                try {
+                                  const all = await getFormulas();
+                                  const list = Array.isArray(all) ? all : (all?.data || []);
+                                  const found = list.find((f: any) => Number(f.producto_terminado_id) === Number(product.id));
+                                  if (found) setProductFormula(found);
+                                } catch (e) {
+                                  console.error('Error cargando fórmulas', e);
+                                }
+                              })();
                             }}
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
+                          
                           <Button
                             variant="ghost"
                             size="icon"
@@ -852,6 +1024,11 @@ export default function Productos() {
                   <div className="text-sm text-muted-foreground">Stock actual</div>
                   <div className="font-medium">{(() => {
                     const inv = (viewStockDetalle?.inventario) || (viewStockProduct as any)?.inventario || (productDetalle as any)?.inventario || [];
+                    if (!Array.isArray(inv) || inv.length === 0) return '0';
+                    if (!selectedAlmacenId) {
+                      const total = inv.reduce((s: number, x: any) => s + Number(x.stock_fisico || 0), 0);
+                      return Number(total).toLocaleString('es-AR');
+                    }
                     const existing = inv.find((x: any) => Number(x.almacen_id) === Number(selectedAlmacenId));
                     return Number(existing?.stock_fisico || 0).toLocaleString('es-AR');
                   })()}</div>
@@ -859,8 +1036,14 @@ export default function Productos() {
                   <div className="text-sm text-muted-foreground mt-2">Stock resultante (actual + cantidad)</div>
                   <div className="font-semibold">{(() => {
                     const inv = (viewStockDetalle?.inventario) || (viewStockProduct as any)?.inventario || (productDetalle as any)?.inventario || [];
-                    const existing = inv.find((x: any) => Number(x.almacen_id) === Number(selectedAlmacenId));
-                    const actual = Number(existing?.stock_fisico || 0);
+                    if (!Array.isArray(inv) || inv.length === 0) return Number(assignCantidad || 0).toLocaleString('es-AR');
+                    let actual = 0;
+                    if (!selectedAlmacenId) {
+                      actual = inv.reduce((s: number, x: any) => s + Number(x.stock_fisico || 0), 0);
+                    } else {
+                      const existing = inv.find((x: any) => Number(x.almacen_id) === Number(selectedAlmacenId));
+                      actual = Number(existing?.stock_fisico || 0);
+                    }
                     const cantidad = Number(assignCantidad || 0);
                     return (actual + cantidad).toLocaleString('es-AR');
                   })()}</div>

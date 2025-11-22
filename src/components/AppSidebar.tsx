@@ -1,5 +1,8 @@
-import { Home, Package, Users, Warehouse, FlaskConical, ShoppingCart, Building2, CreditCard, Receipt, LogOut } from "lucide-react";
-import { useLocation } from 'react-router-dom';
+import { Home, Package, Users, Warehouse, FlaskConical, ShoppingCart, Building2, CreditCard, Receipt, LogOut, Layers, Award, Square } from "lucide-react";
+import { useLocation, Link } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { usePermissions } from '@/hooks/use-permissions';
+// no module-based menu filtering — keep menu visible for all users except the Usuarios link which remains admin-only
 import {
   Sidebar,
   SidebarContent,
@@ -18,22 +21,54 @@ import { useAuth } from "@/hooks/use-auth";
 import useCart from "@/hooks/use-cart";
 
 const menuItems = [
-  { title: "Dashboard", url: "/dashboard", icon: Home },
-  { title: "Productos", url: "/productos", icon: Package },
-  { title: "Almacenes", url: "/almacenes", icon: Warehouse },
-  { title: "Fórmulas", url: "/formulas", icon: FlaskConical },
-  { title: "Producción", url: "/produccion", icon: FlaskConical },
-  { title: "Pedidos", url: "/pedidos", icon: ShoppingCart },
-  { title: "Bancos", url: "/bancos", icon: Building2 },
-  { title: "Tasas de cambio", url: "/tasas-cambio", icon: CreditCard },
+  { title: "Dashboard", url: "/dashboard", icon: Home, module: 'dashboard' as const },
+  { title: "Tasas de cambio", url: "/tasas-cambio", icon: CreditCard, module: 'tasas_cambio' as const },
+  { title: "Bancos", url: "/bancos", icon: Building2, module: 'bancos' as const },
+  { title: "Marcas", url: "/marcas", icon: Award, module: 'marcas' as const },
+  { title: "Categorías", url: "/categorias", icon: Layers, module: 'categorias' as const },
+  { title: "Almacenes", url: "/almacenes", icon: Warehouse, module: 'almacenes' as const },
+  { title: "Productos", url: "/productos", icon: Package, module: 'productos' as const },
+  { title: "Fórmulas", url: "/formulas", icon: FlaskConical, module: 'formulas' as const },
+  { title: "Pedidos", url: "/pedidos", icon: Receipt, module: 'pedidos' as const },
+  { title: "Usuarios", url: "/usuarios", icon: Users, module: 'usuarios' as const },
 ];
 
 export function AppSidebar() {
   const { open } = useSidebar();
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout } = useAuth();
+  const { logout, token, userId } = useAuth();
   const { clear: clearCart } = useCart();
+  const { hasPermission, loadUserPermissions, permissions } = usePermissions();
+
+  // Determine role from JWT token (if available).
+  let isAdmin = false;
+  try {
+    if (token) {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+
+        const role = payload?.rol ?? payload?.role ?? payload?.role_name ?? payload?.roles ?? null;
+        if (typeof role === 'string') {
+          isAdmin = role.toLowerCase() === 'admin';
+        } else if (Array.isArray(role)) {
+          isAdmin = role.map((r: any) => String(r).toLowerCase()).includes('admin');
+        }
+      }
+    }
+  } catch (e) {
+    isAdmin = false;
+  }
+
+  // Load permissions when userId changes
+  useEffect(() => {
+    if (userId) {
+      loadUserPermissions(userId);
+    }
+  }, [userId]);
+
+  // Note: menu visibility is driven by backend module flags from usuario_modulos table
 
   const handleLogout = () => {
     // Ejecuta la limpieza local de sesión y redirige al login
@@ -45,11 +80,11 @@ export function AppSidebar() {
       } catch (e) {
         // noop
       }
-  navigate("/login", { replace: true });
+      navigate("/login", { replace: true });
     } catch (e) {
       // En caso de error, al menos asegurarnos de eliminar el token y redirigir
       localStorage.removeItem("jwt_token");
-  navigate("/login", { replace: true });
+      navigate("/login", { replace: true });
     }
   };
 
@@ -68,13 +103,20 @@ export function AppSidebar() {
           )}
         </div>
       </SidebarHeader>
-      
+
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Menú Principal</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {menuItems.map((item) => {
+                // Check permission from usuario_modulos for all items
+                if (item.module && !hasPermission(item.module)) {
+                  return null;
+                }
+
+                return item;
+              }).filter(Boolean).map((item: any) => {
                 const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");
                 return (
                   <SidebarMenuItem key={item.title}>
@@ -96,6 +138,7 @@ export function AppSidebar() {
                   </SidebarMenuItem>
                 );
               })}
+
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

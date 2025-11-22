@@ -95,12 +95,13 @@ const ProductCarousel: React.FC<ProductCarouselProps> = ({ products, isMobile = 
               <div className="bg-white rounded-lg overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 h-full flex flex-col">
                 <div className="relative pt-[100%] overflow-hidden">
                   <img 
-                    src={getImageUrl(product) || '/placeholder-product.jpg'} 
+                    src={getImageUrl(product)} 
                     alt={product.name} 
                     className="absolute top-0 left-0 w-full h-full object-cover transition-transform duration-500 hover:scale-105"
                     onError={(e) => {
                       const target = e.target as HTMLImageElement;
-                      target.src = 'https://via.placeholder.com/300x300?text=Imagen+no+disponible';
+                      target.onerror = null;
+                      target.src = getImageUrl(undefined) as string;
                     }}
                   />
                 </div>

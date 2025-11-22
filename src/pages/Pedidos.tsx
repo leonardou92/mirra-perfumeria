@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch } from "@/integrations/api";
+import { getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas } from "@/integrations/api";
 import PaymentByBank from '@/components/PaymentByBank';
-import { parseApiError } from '@/lib/utils';
+import { parseApiError, getImageUrl } from '@/lib/utils';
 import { Eye } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -25,35 +26,88 @@ export default function Pedidos() {
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [newOrdersCount, setNewOrdersCount] = useState<number>(0);
+  const [pagosMap, setPagosMap] = useState<Record<number, any[]>>({});
+  // Refrescar y reconstruir el mapa de pagos por pedido
+  const refreshPagosMap = async () => {
+    try {
+      const pagosAll = await getPagos();
+      const pagosList = Array.isArray(pagosAll) ? pagosAll : (pagosAll?.data || []);
+      const map: Record<number, any[]> = {};
+      for (const pg of pagosList) {
+        // soportar varias formas de referenciar el pedido en el objeto pago
+        const possible = pg?.pedido_venta_id ?? pg?.pedido_id ?? pg?.pedidoId ?? pg?.venta_id ?? pg?.ventaId ?? pg?.order_id ?? pg?.orderId ?? pg?.pedidoVentaId ?? pg?.pedido?.id ?? pg?.pedidoVenta?.id;
+        const pid = Number(possible);
+        if (!Number.isFinite(pid) || pid <= 0) continue;
+        if (!map[pid]) map[pid] = [];
+        map[pid].push(pg);
+      }
+      setPagosMap(map);
+    } catch (e) {
+      console.error('Error cargando pagos para pagosMap', e);
+    }
+  };
+
+  // Helpers y acciones para producir desde una línea del pedido
+  function isMateriaAlmacen(a: any) {
+    if (!a) return false;
+    if (a.es_materia_prima === true) return true;
+    const tipo = (a.tipo || '').toString().toLowerCase();
+    if (!tipo) return false;
+    return tipo.includes('materia') || tipo.includes('materiaprima');
+  }
+
+
   const navigate = useNavigate();
+
+  // Helper: ordenar pedidos por fecha descendente (más recientes primero)
+  const sortPedidosByDateDesc = (list: any[]) => {
+    const arr = Array.isArray(list) ? list.slice() : [];
+    arr.sort((a: any, b: any) => {
+      const da = Date.parse(a?.fecha || a?.created_at || a?.createdAt || '') || 0;
+      const db = Date.parse(b?.fecha || b?.created_at || b?.createdAt || '') || 0;
+      return db - da;
+    });
+    return arr;
+  };
+
+  const getRowClasses = (p: any) => {
+    const s = (p?.estado || p?.status || '').toString().toLowerCase();
+    let bg = 'bg-white';
+    let border = 'border-transparent';
+    let borderColor = 'border-transparent';
+    if (s === 'pendiente') { bg = 'bg-yellow-50/60'; borderColor = 'border-yellow-400'; }
+    else if (s === 'enviado') { bg = 'bg-sky-50/60'; borderColor = 'border-sky-400'; }
+    else if (s === 'completado') { bg = 'bg-green-50/60'; borderColor = 'border-green-400'; }
+    else if (s === 'cancelado') { bg = 'bg-red-50/60'; borderColor = 'border-red-400'; }
+    const ts = Date.parse(p?.fecha || p?.created_at || p?.createdAt || '') || 0;
+    const recent = (Date.now() - ts) < (1000 * 60 * 60 * 24); // 24h
+    // more lively styles: rounded cards, subtle shadow, left accent border and hover scale
+    return `transition-transform transform hover:scale-[1.01] duration-150 rounded-md ${bg} ${borderColor} border-l-4 ${recent ? 'shadow-md' : 'shadow-sm'}`;
+  };
 
   useEffect(() => {
     setLoading(true);
-    getPedidos()
-      .then((data) => {
-        // API returns an array of pedidos (or { data: [...] })
-        const list = Array.isArray(data) ? data : (data && Array.isArray(data.data) ? data.data : []);
-        // Ordenar por fecha más reciente primero
-        const withDates = list.slice();
-        withDates.sort((a: any, b: any) => {
-          const da = Date.parse(a?.fecha || a?.created_at || a?.createdAt || '') || 0;
-          const db = Date.parse(b?.fecha || b?.created_at || b?.createdAt || '') || 0;
-          return db - da;
-        });
-        setPedidos(withDates);
-      })
-      .catch((err) => {
+    // Cargar pedidos y luego el mapa de pagos
+    (async () => {
+      try {
+        const data = await getPedidos();
+        const list = Array.isArray(data) ? data : (data && Array.isArray((data as any).data) ? (data as any).data : []);
+        setPedidos(sortPedidosByDateDesc(list));
+        // Construir mapa de pagos
+        await refreshPagosMap();
+      } catch (err) {
         console.error('Error cargando pedidos', err);
-        // Si 401 -> pedir login y redirigir
         if (err instanceof Error && /401/.test(err.message)) {
           toast.error('No autorizado. Por favor inicia sesión.');
           navigate('/login', { replace: true });
         } else {
           toast.error('No se pudieron cargar los pedidos');
         }
-      })
-      .finally(() => setLoading(false));
-  }, []);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [navigate]);
 
   // Filtrado local por estado
   const visiblePedidos = selectedStatus ? pedidos.filter((p: any) => (p.estado || p.status || '').toString() === selectedStatus) : pedidos;
@@ -71,102 +125,46 @@ export default function Pedidos() {
   const allStatuses = ['Pendiente', 'Enviado', 'Completado', 'Cancelado'];
   const countFor = (st: string) => pedidos.filter((p: any) => (p.estado || p.status || '').toString().toLowerCase() === st.toLowerCase()).length;
 
-  // Real-time notifications: intentar EventSource y fallback a polling
+  // Notificaciones: usar polling cada 15s (el endpoint SSE no existe en este backend)
   useEffect(() => {
-    let es: EventSource | null = null;
     let polling: any = null;
-    const token = getToken?.();
     (async () => {
-      // Preflight check: try a short GET to the SSE endpoint to detect 401 quickly.
-      const streamUrl = `${API_URL}/pedidos-venta/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
       try {
-        const headers: any = {};
-        if (token) headers.Authorization = `Bearer ${token}`;
-        const pre = await fetch(streamUrl, { method: 'GET', headers, signal: controller.signal });
-        if (pre.status === 401) {
-          // Not authorized -> clear token and navigate to login
-          try { localStorage.removeItem('jwt_token'); } catch (e) {}
-          navigate('/login', { replace: true });
-          clearTimeout(timeout);
-          return;
-        }
+        const fresh = await getPedidos();
+        if (Array.isArray(fresh)) setPedidos(fresh);
       } catch (e) {
-        // If preflight times out or errors, we'll still try EventSource: server may accept SSE.
-      } finally {
-        clearTimeout(timeout);
+        // ignore
       }
-
-      try {
-        // Intentar conectar SSE con token en query (si el backend lo soporta)
-        es = new EventSource(streamUrl);
-        es.onmessage = async (ev) => {
-          try {
-            const data = JSON.parse(ev.data);
-            // Si el servidor envía detalle del pedido
-            if (data && (data.pedido || data.type === 'new_pedido')) {
-              setNewOrdersCount((c) => c + 1);
-              toast.success('Nuevo pedido recibido');
-              // opcional: actualizar lista
-              try {
-                const fresh = await getPedidos();
-                if (Array.isArray(fresh)) setPedidos(fresh);
-              } catch (e) {}
-              return;
-            }
-          } catch (e) {
-            // si no es JSON, tratar como evento genérico: refrescar y notificar
-          }
-          setNewOrdersCount((c) => c + 1);
-          toast.success('Nuevo pedido recibido');
-          try {
-            const fresh = await getPedidos();
-            if (Array.isArray(fresh)) setPedidos(fresh);
-          } catch (e) {}
-        };
-        es.onerror = (err) => {
-          // Si falla, cerrar y usar polling
-          try { es?.close(); } catch (e) {}
-          es = null;
-          // start polling
-          polling = setInterval(async () => {
+        polling = setInterval(async () => {
             try {
               const fresh = await getPedidos();
               if (Array.isArray(fresh)) {
-                if (fresh.length > pedidos.length) {
-                  setNewOrdersCount((c) => c + (fresh.length - pedidos.length));
-                  toast.success(`Hay ${fresh.length - pedidos.length} pedidos nuevos`);
-                }
-                setPedidos(fresh);
+                // Ordenar y usar actualización funcional para comparar con el estado previo
+                const sortedFresh = sortPedidosByDateDesc(fresh);
+                setPedidos((prev) => {
+                  try {
+                    if (sortedFresh.length > (prev?.length || 0)) {
+                      setNewOrdersCount((c) => c + (sortedFresh.length - (prev?.length || 0)));
+                      toast.success(`Hay ${sortedFresh.length - (prev?.length || 0)} pedidos nuevos`);
+                    }
+                  } catch (err) {
+                    console.debug(err);
+                  }
+                  return sortedFresh;
+                });
+                // refrescar pagosMap en background para mantener el listado sincronizado
+                try { await refreshPagosMap(); } catch (e) { console.debug(e); }
               }
             } catch (e) {
-              // ignore
+              console.debug(e);
             }
-          }, 15000);
-        };
-      } catch (e) {
-        // No SSE: fallback polling
-        polling = setInterval(async () => {
-          try {
-            const fresh = await getPedidos();
-            if (Array.isArray(fresh)) {
-              if (fresh.length > pedidos.length) {
-                setNewOrdersCount((c) => c + (fresh.length - pedidos.length));
-                toast.success(`Hay ${fresh.length - pedidos.length} pedidos nuevos`);
-              }
-              setPedidos(fresh);
-            }
-          } catch (e) {}
-        }, 15000);
-      }
+      }, 15000);
     })();
 
     return () => {
-      if (es) try { es.close(); } catch (e) {}
       if (polling) clearInterval(polling);
     };
-  }, [pedidos]);
+  }, []);
 
   const fmtCliente = (p: any) => p?.nombre_cliente || p?.cliente_nombre || p?.cliente?.nombre || 'Anónimo';
   const fmtFecha = (p: any) => p?.fecha || p?.created_at || p?.createdAt || '-';
@@ -214,7 +212,26 @@ export default function Pedidos() {
     try {
       // Prefer explicit flag
       if (p?.pagado === true || p?.is_paid === true) return true;
-      const pagos = Array.isArray(p?.pagos) ? p.pagos : (Array.isArray(p?.pagos_venta) ? p.pagos_venta : (Array.isArray(p?.payments) ? p.payments : []));
+      let pagos = Array.isArray(p?.pagos) ? p.pagos : (Array.isArray(p?.pagos_venta) ? p.pagos_venta : (Array.isArray(p?.payments) ? p.payments : []));
+      // Si el mapa global de pagos ya contiene entradas para este pedido, considerarlo pagado.
+      try {
+        const candidate = p?.id ?? p?.pedido_venta_id ?? p?.pedidoId ?? p?.venta_id ?? p?.ventaId ?? p?.order_id ?? p?.orderId;
+        const pidNum = Number(candidate);
+        if ((!pagos || pagos.length === 0) && pagosMap && Number.isFinite(pidNum) && pidNum > 0) {
+          const mapped = pagosMap[pidNum];
+          if (Array.isArray(mapped) && mapped.length > 0) return true;
+        }
+      } catch (e) {
+        // ignore mapping errors
+      }
+      // fallback: usar pagosMap cargado globalmente. Soportar varias formas de identificar el id del pedido
+      if ((!pagos || pagos.length === 0) && pagosMap) {
+        const candidate = p?.id ?? p?.pedido_venta_id ?? p?.pedidoId ?? p?.venta_id ?? p?.ventaId ?? p?.order_id ?? p?.orderId;
+        const pidNum = Number(candidate);
+        if (Number.isFinite(pidNum) && pidNum > 0) {
+          pagos = pagosMap[pidNum] || [];
+        }
+      }
       if (!pagos || pagos.length === 0) return false;
       // calcular total base similar a fmtTotal
       const base = (() => {
@@ -231,18 +248,27 @@ export default function Pedidos() {
         }
         return null;
       })();
-      if (base === null) return false;
+      if (base === null) {
+        // Si el listado no incluye el total del pedido (base === null) pero sí tenemos pagos
+        // asociados (por ejemplo porque se consultaron con `getPagos()`), consideramos
+        // el pedido como pagado para efectos del badge en el listado.
+        // Esto evita mostrar "Sin pago" cuando el detalle sí contiene pagos.
+        return pagos.length > 0;
+      }
       const tasaVal = fmtTasa(p);
       // sumar equivalencias (si las hay) o derivarlas con tasa del pedido
       let sumEq = 0;
+      let sumRawMonto = 0;
       for (const pay of pagos) {
         const eq = pay?.equivalencia ?? pay?.equivalente ?? null;
         if (eq !== null && eq !== undefined && Number.isFinite(Number(eq))) {
           sumEq += Number(eq);
+          sumRawMonto += Number(pay?.monto ?? pay?.amount ?? 0);
           continue;
         }
         const monto = Number(pay?.monto ?? pay?.amount ?? 0);
-        const tpay = pay?.tasa_monto ?? null;
+        sumRawMonto += monto;
+        const tpay = pay?.tasa_monto ?? pay?.tasa ?? pay?.tasa_cambio_monto ?? null;
         const tnum = typeof tpay === 'number' ? tpay : (tpay ? Number(String(tpay).replace(',', '.')) : null);
         const usedT = Number.isFinite(tnum) && tnum > 0 ? tnum : (tasaVal || NaN);
         if (Number.isFinite(monto) && Number.isFinite(usedT) && usedT !== 0) {
@@ -250,11 +276,34 @@ export default function Pedidos() {
         }
       }
       const tol = 0.05;
+      // Si no pudimos derivar equivalencias (sumEq === 0) pero los pagos suman montos en la misma
+      // unidad que el pedido (no hay tasa), comparar la suma bruta de montos con el total.
+      if ((!Number.isFinite(sumEq) || sumEq === 0) && (!tasaVal || Number.isNaN(Number(tasaVal)))) {
+        // comparar sumRawMonto con base
+        return Number.isFinite(sumRawMonto) && Math.abs(sumRawMonto - base) <= tol;
+      }
       return Number.isFinite(sumEq) && Math.abs(sumEq - base) <= tol;
     } catch (e) {
       return false;
     }
   }
+  // Detectar si el pedido tiene líneas que requieren producción pero aún no tienen orden creada
+  const hasPendingProductionLines = (p: any) => {
+    try {
+      if (!p) return false;
+      const prods = Array.isArray(p.productos) ? p.productos : (Array.isArray(p.lineas) ? p.lineas : []);
+      for (const it of prods) {
+        const fid = Number(it?.formula_id ?? it?.formulaId ?? it?.formula?.id ?? 0) || 0;
+        if (fid && fid > 0) {
+          const created = (it?.produccion_creada === true) || Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.orden_produccion_id);
+          if (!created) return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
   const [selectedPedido, setSelectedPedido] = useState<any | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -273,6 +322,306 @@ export default function Pedidos() {
   const [directBancoId, setDirectBancoId] = useState<number | null>(null);
   const [directFormaId, setDirectFormaId] = useState<number | null>(null);
   const [directLoading, setDirectLoading] = useState(false);
+  // Ordenes de producción detalladas asociadas al pedido abierto
+  const [ordenesDetailed, setOrdenesDetailed] = useState<any[]>([]);
+  // Mapa por id de orden -> detalle (para lookup rápido cuando la línea referencia una orden_id)
+  const [ordenDetailsMap, setOrdenDetailsMap] = useState<Record<number, any>>({});
+  // Cache de info de materias primas (opcional)
+  const [materiasCostMap, setMateriasCostMap] = useState<Record<number, any>>({});
+
+  // Estados para modal de producir desde línea del pedido
+  const [prodModalOpen, setProdModalOpen] = useState(false);
+  const [prodLine, setProdLine] = useState<any | null>(null);
+  const [prodCantidad, setProdCantidad] = useState<number>(1);
+  const [prodAlmacenes, setProdAlmacenes] = useState<any[]>([]);
+  const [prodSelectedAlmacen, setProdSelectedAlmacen] = useState<number | null>(null);
+  const [prodSubmitting, setProdSubmitting] = useState(false);
+  const [prodComponents, setProdComponents] = useState<any[]>([]);
+  // Estados para eliminar línea de pedido
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteLine, setDeleteLine] = useState<any | null>(null);
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  // Estados para agregar producto al pedido
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [addProductId, setAddProductId] = useState<number | null>(null);
+  const [addCantidad, setAddCantidad] = useState<number>(1);
+  const [addPrecio, setAddPrecio] = useState<number | null>(null);
+  const [presentacionesOptions, setPresentacionesOptions] = useState<any[]>([]);
+  const [addPresentacionId, setAddPresentacionId] = useState<number | null>(null);
+  const [productosOptions, setProductosOptions] = useState<any[]>([]);
+  const [addSubmitting, setAddSubmitting] = useState<boolean>(false);
+  // Cuando cambie la cantidad a producir, recalcular las cantidades sugeridas
+  // Cuando cambie la cantidad a producir, recalcular las cantidades sugeridas
+  useEffect(() => {
+    // Usar el updater de estado para evitar leer `prodComponents` desde el closure
+    setProdComponents((prev) => {
+      try {
+        if (!Array.isArray(prev) || prev.length === 0) return prev;
+        const qty = Number(prodCantidad || 0);
+        return prev.map((c) => {
+          const unit = Number(c?.cantidad_por_unidad ?? 0) || 0;
+          const newVal = Number((unit * qty).toFixed(2));
+          return { ...c, cantidad_editable: newVal };
+        });
+      } catch (e) {
+        console.debug('prodComponents recalc error', e);
+        return prev;
+      }
+    });
+  }, [prodCantidad]);
+  // Helpers para producir desde una línea del pedido (moved aquí para tener acceso a hooks)
+  async function openProduceModalForLine(line: any) {
+    setProdLine(line);
+    setProdCantidad(Number(line?.cantidad ?? 1) || 1);
+    setProdSelectedAlmacen(null);
+    setProdAlmacenes([]);
+    setProdModalOpen(true);
+    try {
+      const ares = await getAlmacenes();
+      const list = Array.isArray(ares) ? ares : (ares?.data || []);
+      const ventaList = list.filter((a: any) => !isMateriaAlmacen(a));
+      setProdAlmacenes(ventaList);
+      // Preferir el almacén asociado al pedido/linea si existe
+      let preferido: number | null = null;
+      try {
+        const cand = line?.almacen_id ?? line?.almacenVentaId ?? line?.almacen_venta_id ?? selectedPedido?.almacen_id ?? selectedPedido?.almacen_venta_id ?? selectedPedido?.almacenId ?? null;
+        if (cand) preferido = Number(cand);
+      } catch (e) { console.debug(e); }
+      const venta = ventaList.find((a: any) => Number(a.id) === Number(preferido)) || ventaList.find((a: any) => a.tipo === 'Venta') || ventaList[0];
+      setProdSelectedAlmacen(venta ? venta.id : null);
+      // Si la línea no trae componentes, intentar cargar la fórmula asociada para mostrar componentes
+      let fetchedFormula: any = null;
+      try {
+        const fid = Number(line?.formula_id ?? line?.formula?.id ?? 0);
+        if (fid && (!Array.isArray(line?.componentes) || line.componentes.length === 0)) {
+          try {
+            fetchedFormula = await getFormula(fid);
+            if (fetchedFormula) setProdLine((prev: any) => ({ ...prev, formula_fetched: fetchedFormula }));
+          } catch (err) {
+            console.debug('Error fetching formula', err);
+          }
+        }
+      } catch (e) { console.debug(e); }
+
+      // Preparar componentes editables para el modal (usar los de la línea o los de la fórmula fetch)
+      try {
+        const comps = Array.isArray(line?.componentes) && line.componentes.length > 0
+          ? line.componentes
+          : (fetchedFormula?.componentes ?? line?.formula?.componentes ?? []);
+        let initial = (Array.isArray(comps) ? comps : []).map((c: any) => {
+          const unit = Number(c?.cantidad_por_unidad ?? c?.cantidad ?? 0) || 0;
+          const cantidad_init = unit * (Number(line?.cantidad ?? prodCantidad) || 1);
+          return {
+            materia_prima_id: Number(c?.materia_prima_id ?? c?.id ?? 0) || null,
+            nombre: c?.materia_prima_nombre ?? c?.materia_nombre ?? c?.nombre ?? null,
+            unidad: c?.unidad ?? c?.u ?? '',
+            cantidad_por_unidad: unit,
+            cantidad_editable: Number(Number(cantidad_init).toFixed(2)),
+          };
+        });
+
+        // Resolver nombres faltantes consultando getProducto y poblar materiasCostMap
+        try {
+          const missingIds = Array.from(new Set(initial.filter((c) => (!c.nombre || c.nombre === null) && c.materia_prima_id).map((c) => Number(c.materia_prima_id))));
+          if (missingIds.length > 0) {
+            const fetched = await Promise.all(missingIds.map((id) => getProducto(id).catch(() => null)));
+            const fetchedMap: Record<number, any> = {};
+            fetched.forEach((res: any, i: number) => {
+              const id = missingIds[i];
+              if (res) fetchedMap[id] = { nombre: res.nombre ?? res.name ?? null };
+            });
+            if (Object.keys(fetchedMap).length > 0) setMateriasCostMap((prev) => ({ ...(prev || {}), ...(fetchedMap || {}) }));
+            // Aplicar nombres resueltas a la lista local
+            initial = initial.map((c) => {
+              const id = Number(c.materia_prima_id ?? 0) || 0;
+              if ((!c.nombre || c.nombre === null) && fetchedMap[id] && fetchedMap[id].nombre) {
+                return { ...c, nombre: fetchedMap[id].nombre };
+              }
+              return c;
+            });
+          }
+        } catch (err) {
+          console.debug('Error resolviendo nombres de materias en modal', err);
+        }
+
+        setProdComponents(initial);
+      } catch (e) {
+        console.debug('No se pudieron cargar almacenes para producción', e);
+      }
+    } catch (e) {
+      console.debug('openProduceModalForLine error', e);
+    }
+  }
+
+  async function handleProduceFromLine() {
+    if (!prodLine) return;
+    const formulaId = Number(prodLine?.formula_id ?? prodLine?.formula?.id ?? 0);
+    if (!formulaId || Number.isNaN(formulaId) || formulaId <= 0) {
+      toast.error('La línea no tiene asociado una fórmula válida para producir');
+      return;
+    }
+    if (!prodSelectedAlmacen) { toast.error('No se pudo determinar el almacén destino para esta producción'); return; }
+    if (!prodCantidad || Number(prodCantidad) <= 0) { toast.error('Ingrese una cantidad válida (>0)'); return; }
+    setProdSubmitting(true);
+    try {
+      // intentar crear y capturar la respuesta (para obtener id de orden)
+      let createdResp: any = null;
+      let creationPath = 'none';
+      // construir payload genérico a usar en el endpoint de ordenes-produccion
+      const payload: any = {
+        formula_id: formulaId,
+        cantidad: Number(prodCantidad),
+        almacen_venta_id: Number(prodSelectedAlmacen),
+        producto_terminado_id: Number(prodLine?.producto_id ?? prodLine?.producto?.id ?? prodLine?.producto_terminado_id ?? 0) || undefined,
+        componentes: Array.isArray(prodComponents) ? prodComponents.map((c: any) => ({
+          materia_prima_id: Number(c?.materia_prima_id ?? 0) || null,
+          cantidad: Number(c?.cantidad_editable ?? c?.cantidad_por_unidad ?? 0) || 0,
+          unidad: c?.unidad ?? undefined,
+        })) : undefined,
+      };
+      // Preferir endpoint específico para crear orden desde línea de pedido si disponemos de pedido y línea
+      if (selectedPedido?.id && prodLine?.id) {
+        try {
+          createdResp = await apiFetch(`/pedidos-venta/${selectedPedido.id}/lineas/${prodLine.id}/ordenes-produccion`, { method: 'POST' });
+          creationPath = 'line';
+        } catch (errLine: any) {
+          // Intentar interpretar errores esperados del backend
+          try {
+            const txt = String(errLine?.message || errLine || '');
+            const parsed = JSON.parse(txt);
+            if (parsed && parsed.code === 'MISSING_FORMULA') {
+              toast.error('La línea no tiene fórmula asociada (MISSING_FORMULA)');
+              setProdSubmitting(false);
+              return;
+            }
+            if (parsed && parsed.code === 'ALREADY_CREATED') {
+              toast.error('La línea ya tiene una orden creada (ALREADY_CREATED)');
+              setProdSubmitting(false);
+              return;
+            }
+          } catch (e) {
+            // no-op: no pudimos parsear JSON, continuar con fallback
+          }
+          // si el endpoint de línea falló por otra razón, seguiremos con creación general abajo
+        }
+      }
+
+      if (!createdResp) {
+        try {
+          createdResp = await apiFetch('/ordenes-produccion', { method: 'POST', body: JSON.stringify(payload) });
+          creationPath = 'general';
+        } catch (errPost) {
+          // si el endpoint no acepta el payload, fallback a la API helper existente
+          try {
+            createdResp = await createProduccion(formulaId, { cantidad: Number(prodCantidad), almacen_venta_id: Number(prodSelectedAlmacen) });
+            creationPath = 'helper';
+          } catch (err2) {
+            // última opción: rethrow
+            throw err2 ?? errPost;
+          }
+        }
+      }
+
+      toast.success('Producción creada');
+      // extraer id de la respuesta en varias formas posibles y actualizar UI según la ruta usada
+      try {
+        // Si la creación fue por endpoint de línea, el backend puede devolver { orden_produccion, linea_actualizada }
+        if (creationPath === 'line') {
+          const ordenObj = createdResp?.orden_produccion ?? createdResp?.orden ?? createdResp?.orden_produccion ?? null;
+          const linea = createdResp?.linea_actualizada ?? createdResp?.linea ?? createdResp?.linea_actual ?? null;
+          const ordenId = Number(ordenObj?.id ?? ordenObj?.orden_id ?? null) || null;
+          if (selectedPedido && prodLine) {
+            const updatedProductos = (selectedPedido.productos || []).map((p: any) => {
+              // preferir match por id de línea (linea.id), luego por producto+cantidad
+              if (linea && Number(linea.id) && Number(p.id) && Number(p.id) === Number(linea.id)) {
+                return { ...p, produccion_creada: true, orden_id: linea.orden_produccion_id ?? ordenId ?? p.orden_id ?? p.orden_produccion_id ?? null };
+              }
+              // fallback: si prodLine coincide con p según heurística previa
+              const matchLine = (a: any, b: any) => {
+                try {
+                  if (!a || !b) return false;
+                  if (a.id && b.id && Number(a.id) === Number(b.id)) return true;
+                  const aPid = a.producto_id ?? a.productoId ?? a.producto ?? a.producto_id;
+                  const bPid = b.producto_id ?? b.productoId ?? b.producto ?? b.producto_id;
+                  if (aPid && bPid && Number(aPid) === Number(bPid)) {
+                    const aq = Number(a.cantidad ?? a.qty ?? 0);
+                    const bq = Number(b.cantidad ?? b.qty ?? 0);
+                    if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
+                  }
+                  if (a.nombre && b.nombre && String(a.nombre) === String(b.nombre)) {
+                    const aq = Number(a.cantidad ?? a.qty ?? 0);
+                    const bq = Number(b.cantidad ?? b.qty ?? 0);
+                    if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
+                  }
+                  return false;
+                } catch (e) { return false; }
+              };
+              if (matchLine(p, prodLine)) {
+                return { ...p, produccion_creada: true, orden_id: linea?.orden_produccion_id ?? ordenId ?? p.orden_id ?? p.orden_produccion_id ?? null };
+              }
+              return p;
+            });
+            const newSelected = { ...selectedPedido, productos: updatedProductos };
+            setSelectedPedido(newSelected);
+            setPedidos((list) => (Array.isArray(list) ? list.map((pp: any) => (pp.id === newSelected.id ? { ...pp, productos: updatedProductos } : pp)) : list));
+          }
+        } else {
+          // creación general: createdResp puede ser la orden creada
+          const ordenId = Number(createdResp?.id ?? createdResp?.orden_id ?? createdResp?.orden?.id ?? null) || null;
+          if (selectedPedido && prodLine) {
+            const matchLine = (a: any, b: any) => {
+              try {
+                if (!a || !b) return false;
+                if (a.id && b.id && Number(a.id) === Number(b.id)) return true;
+                const aPid = a.producto_id ?? a.productoId ?? a.producto ?? a.producto_id;
+                const bPid = b.producto_id ?? b.productoId ?? b.producto ?? b.producto_id;
+                if (aPid && bPid && Number(aPid) === Number(bPid)) {
+                  const aq = Number(a.cantidad ?? a.qty ?? 0);
+                  const bq = Number(b.cantidad ?? b.qty ?? 0);
+                  if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
+                }
+                if (a.nombre && b.nombre && String(a.nombre) === String(b.nombre)) {
+                  const aq = Number(a.cantidad ?? a.qty ?? 0);
+                  const bq = Number(b.cantidad ?? b.qty ?? 0);
+                  if (Number.isFinite(aq) && Number.isFinite(bq) && aq === bq) return true;
+                }
+                return false;
+              } catch (e) { return false; }
+            };
+
+            const updatedProductos = (selectedPedido.productos || []).map((p: any) => {
+              if (matchLine(p, prodLine)) {
+                return { ...p, produccion_creada: true, orden_id: ordenId ?? p.orden_id ?? p.ordenes_produccion_id ?? p.orden_produccion_id ?? null };
+              }
+              return p;
+            });
+            const newSelected = { ...selectedPedido, productos: updatedProductos };
+            setSelectedPedido(newSelected);
+            setPedidos((list) => (Array.isArray(list) ? list.map((pp: any) => (pp.id === newSelected.id ? { ...pp, productos: updatedProductos } : pp)) : list));
+          }
+        }
+      } catch (e) { console.debug('Error actualizando UI tras crear producción', e); }
+
+      setProdModalOpen(false);
+      // refrescar detalle abierto para que aparezcan las órdenes/componentes (opcional)
+      if (selectedPedido?.id) await openDetalle(selectedPedido.id);
+    } catch (err) {
+      console.error('Error creando producción desde pedido', err);
+      toast.error(parseApiError(err) || 'No se pudo crear la producción');
+    } finally {
+      setProdSubmitting(false);
+    }
+  }
+  const makeClientUid = () => {
+    try {
+      // cross-env global crypto typings — runtime-guarded
+      if (typeof globalThis !== 'undefined' && (globalThis as any).crypto && typeof (globalThis as any).crypto.randomUUID === 'function') return (globalThis as any).crypto.randomUUID();
+      if (typeof crypto !== 'undefined' && typeof (crypto as any).randomUUID === 'function') return (crypto as any).randomUUID();
+    } catch (e) { console.debug('makeClientUid error', e); }
+    return `cu_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+  };
+  // Guard para evitar crear pagos duplicados desde el formulario directo
+  const directInFlight = React.useRef<Set<string>>(new Set());
 
   useEffect(() => {
     // cargar opciones para el formulario directo
@@ -289,11 +638,208 @@ export default function Pedidos() {
     })();
   }, []);
 
+  // Cargar lista de productos para agregar (cuando se abre el modal)
+  const loadProductosOptions = async () => {
+    try {
+      const res = await getProductos();
+      const list = Array.isArray(res) ? res : (res?.data || res?.items || []);
+      setProductosOptions(list || []);
+    } catch (e) {
+      console.debug('Error cargando productos para selector', e);
+      setProductosOptions([]);
+    }
+  };
+
+  const loadPresentacionesForProduct = async (productId: number) => {
+    try {
+      const res = await getFormulas();
+      const list = Array.isArray(res) ? res : (res?.data || res?.items || []);
+      const matches = (list || []).filter((f: any) => Number(f.producto_terminado_id ?? f.producto_id) === Number(productId));
+      // Map to presentacion objects with id, nombre, precio_venta
+      const opts = matches.map((f: any) => ({ id: f.id, nombre: f.nombre ?? f.titulo ?? `#${f.id}`, precio_venta: f.precio_venta ?? f.precio ?? null }));
+      setPresentacionesOptions(opts);
+      // reset selection
+      setAddPresentacionId(opts.length > 0 ? opts[0].id : null);
+      setAddPrecio(opts.length > 0 ? (opts[0].precio_venta ?? null) : null);
+    } catch (e) {
+      console.debug('Error cargando presentaciones', e);
+      setPresentacionesOptions([]);
+      setAddPresentacionId(null);
+      setAddPrecio(null);
+    }
+  };
+
   const openDetalle = async (id: number) => {
     try {
       setDetailLoading(true);
       const detalle = await getPedidoVenta(id);
-      setSelectedPedido(detalle);
+      // Intentar obtener pagos específicos del pedido (si el backend expone /pedidos-venta/:id/pagos)
+      try {
+        const pagos = await getPagosByPedido(id);
+        if (Array.isArray(pagos)) detalle.pagos = pagos;
+        else if (pagos && Array.isArray((pagos as any).data)) detalle.pagos = (pagos as any).data;
+      } catch (e) {
+        // Si falla (endpoint no disponible), continuar con lo que devolvió getPedidoVenta
+      }
+      // Calcular diagnóstico de pagos y marcar indicador en el detalle
+      try {
+        const pagosList = Array.isArray(detalle?.pagos) ? detalle.pagos : [];
+        // calcular base del pedido
+        const base = (() => {
+          const t = detalle?.total ?? detalle?.monto ?? null;
+          if (typeof t === 'number') return t;
+          const tnum = Number(t);
+          if (!Number.isNaN(tnum)) return tnum;
+          if (Array.isArray(detalle?.productos) && detalle.productos.length > 0) {
+            return detalle.productos.reduce((acc: number, it: any) => {
+              if (typeof it.subtotal === 'number') return acc + it.subtotal;
+              const price = typeof it.precio_venta === 'number' ? it.precio_venta : Number(it.precio_venta) || 0;
+              const qty = typeof it.cantidad === 'number' ? it.cantidad : Number(it.cantidad) || 0;
+              return acc + price * qty;
+            }, 0);
+          }
+          return null;
+        })();
+        // sumar equivalencias / montos
+        let sumEq = 0;
+        let sumRaw = 0;
+        const tasaVal = (() => {
+          const t = detalle?.tasa_cambio_monto ?? detalle?.tasa ?? null;
+          const n = typeof t === 'number' ? t : (t ? Number(String(t).replace(',', '.')) : null);
+          return Number.isFinite(n) && n > 0 ? n : null;
+        })();
+        for (const pay of pagosList) {
+          const eq = pay?.equivalencia ?? pay?.equivalente ?? null;
+          const monto = Number(pay?.monto ?? pay?.amount ?? 0);
+          sumRaw += monto;
+          if (eq !== null && eq !== undefined && Number.isFinite(Number(eq))) {
+            sumEq += Number(eq);
+            continue;
+          }
+          const tpay = pay?.tasa_monto ?? pay?.tasa ?? pay?.tasa_cambio_monto ?? null;
+          const tnum = typeof tpay === 'number' ? tpay : (tpay ? Number(String(tpay).replace(',', '.')) : null);
+          const usedT = Number.isFinite(tnum) && tnum > 0 ? tnum : (tasaVal || NaN);
+          if (Number.isFinite(monto) && Number.isFinite(usedT) && usedT !== 0) sumEq += monto / usedT;
+        }
+        const tol = 0.05;
+        const computedPaid = (base === null) ? (pagosList.length > 0) : (Number.isFinite(sumEq) && Math.abs(sumEq - base) <= tol) || ((!tasaVal || Number.isNaN(Number(tasaVal))) && Number.isFinite(sumRaw) && Math.abs(sumRaw - base) <= tol);
+        // attach for UI
+        (detalle as any).__computedPaid = computedPaid;
+        // debug log
+         
+        console.debug('detalle-pago-check', { id, base, tasaVal, sumEq, sumRaw, pagosCount: pagosList.length, computedPaid });
+        setSelectedPedido(detalle);
+        // Cargar órdenes de producción detalladas asociadas a este pedido
+        (async () => {
+          try {
+            let ordResp: any = null;
+            try {
+              ordResp = await apiFetch(`/ordenes-produccion/detailed?pedido_id=${encodeURIComponent(String(id))}`);
+            } catch (errQuery: any) {
+              // fallback: intentar listado general y luego filtrar por pedido
+              try { ordResp = await apiFetch('/ordenes-produccion/detailed'); } catch (e) { ordResp = []; }
+            }
+            let ordList = Array.isArray(ordResp) ? ordResp : (ordResp?.data || []);
+            ordList = ordList || [];
+            // Asegurar traer detalles por id referenciados en las líneas del pedido
+            try {
+              const referencedIds = new Set<number>();
+              if (Array.isArray(detalle?.productos)) {
+                for (const it of detalle.productos) {
+                  const cand = it?.orden_id ?? it?.orden_produccion_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId ?? null;
+                  const asNum = Number(cand);
+                  if (Number.isFinite(asNum) && asNum > 0) referencedIds.add(asNum);
+                  if (Array.isArray(it?.ordenes)) {
+                    for (const o of it.ordenes) {
+                      const oid = Number(o?.id ?? o);
+                      if (Number.isFinite(oid) && oid > 0) referencedIds.add(oid);
+                    }
+                  }
+                }
+              }
+              const present = new Set<number>();
+              for (const o of ordList) {
+                const oid = Number(o?.orden?.id ?? o?.id ?? null);
+                if (Number.isFinite(oid) && oid > 0) present.add(oid);
+              }
+              const missing = Array.from(referencedIds).filter((i) => !present.has(i));
+              for (const mid of missing) {
+                try {
+                  const one = await getOrdenProduccionDetailed(mid);
+                  if (one) {
+                    if (Array.isArray(one)) ordList = ordList.concat(one);
+                    else ordList.push(one);
+                  }
+                } catch (e) { console.debug(e); }
+              }
+            } catch (e) { console.debug(e); }
+            setOrdenesDetailed(ordList || []);
+            // Resolver nombres de materias primas referenciadas en las líneas/órdenes para mostrar nombres en el detalle
+            try {
+              const referencedMaterias = new Set<number>();
+              if (Array.isArray(detalle?.productos)) {
+                for (const it of detalle.productos) {
+                  // componentes en la línea
+                  if (Array.isArray(it?.componentes)) {
+                    for (const c of it.componentes) {
+                      const mid = Number(c?.materia_prima_id ?? c?.id ?? 0);
+                      if (Number.isFinite(mid) && mid > 0) referencedMaterias.add(mid);
+                    }
+                  }
+                  // componentes en órdenes referenciadas
+                  const cand = it?.orden_id ?? it?.orden_produccion_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId ?? null;
+                  const oid = Number(cand);
+                  if (Number.isFinite(oid) && oid > 0) {
+                    const od = ordList.find((o: any) => Number(o?.orden?.id ?? o?.id ?? 0) === oid) || ordenDetailsMap[oid];
+                    const compList = Array.isArray(od?.componentes) ? od.componentes : (Array.isArray(od?.orden?.componentes) ? od.orden.componentes : []);
+                    if (Array.isArray(compList)) {
+                      for (const c of compList) {
+                        const mid = Number(c?.materia_prima_id ?? c?.id ?? 0);
+                        if (Number.isFinite(mid) && mid > 0) referencedMaterias.add(mid);
+                      }
+                    }
+                  }
+                }
+              }
+              const missing = Array.from(referencedMaterias).filter((id) => !materiasCostMap || !materiasCostMap[id]);
+              if (missing.length > 0) {
+                const fetched = await Promise.all(missing.map((id) => getProducto(id).catch(() => null)));
+                const addMap: Record<number, any> = {};
+                fetched.forEach((res: any, i: number) => {
+                  const id = missing[i];
+                  if (res) addMap[id] = { nombre: res.nombre ?? res.name ?? null };
+                });
+                if (Object.keys(addMap).length > 0) setMateriasCostMap((prev) => ({ ...(prev || {}), ...addMap }));
+              }
+            } catch (e) {
+              console.debug('Error resolviendo nombres de materias en detalle', e);
+            }
+            // poblar mapa por id
+            try {
+              const mapUpdate: Record<number, any> = {};
+              for (const o of ordList) {
+                const oid = Number(o?.orden?.id ?? o?.id ?? null);
+                if (Number.isFinite(oid) && oid > 0) mapUpdate[oid] = o;
+              }
+              if (Object.keys(mapUpdate).length > 0) setOrdenDetailsMap((prev) => ({ ...prev, ...mapUpdate }));
+            } catch (e) { console.debug(e); }
+          } catch (e) {
+            console.debug('No se pudo cargar órdenes producción detailed', e);
+            setOrdenesDetailed([]);
+          }
+        })();
+        // Si el pedido trae pagos, abrir la vista de pagos automáticamente
+        try {
+          const hasPagos = Array.isArray(detalle?.pagos) && detalle.pagos.length > 0;
+          setShowPaymentsView(Boolean(hasPagos));
+        } catch (e) {
+          setShowPaymentsView(false);
+        }
+      } catch (errInner) {
+        // si algo falla en diagnóstico, continuar mostrando detalle
+        setSelectedPedido(detalle);
+        setShowPaymentsView(Array.isArray(detalle?.pagos) && detalle.pagos.length > 0);
+      }
       setIsDetailOpen(true);
     } catch (err) {
       console.error('Error cargando detalle de pedido', err);
@@ -322,6 +868,11 @@ export default function Pedidos() {
 
   async function completarSinPago() {
     if (!selectedPedido?.id) return;
+    // bloquear completar si hay líneas pendientes por producir
+    if (hasPendingProductionLines(selectedPedido)) {
+      toast.error('Hay líneas pendientes por producir. No se puede completar el pedido hasta crear las órdenes de producción.');
+      return;
+    }
     const ok = window.confirm('¿Seguro que deseas marcar este pedido como COMPLETADO sin registrar pago?');
     if (!ok) return;
     setCompleting(true);
@@ -330,7 +881,7 @@ export default function Pedidos() {
       toast.success('Pedido completado');
       setSelectedPedido((s: any) => s ? { ...s, estado: 'Completado' } : s);
       setPedidos((list) => list.map((p) => (p.id === selectedPedido.id ? { ...p, estado: 'Completado' } : p)));
-      setPaymentOpen(false);
+      setShowPaymentInline(false);
       setIsDetailOpen(false);
     } catch (err) {
       console.error('Error completando pedido', err);
@@ -363,6 +914,67 @@ export default function Pedidos() {
       }
     } finally {
       setCanceling(false);
+    }
+  }
+
+  async function handleDeleteLineConfirmed() {
+    if (!selectedPedido?.id || !deleteLine?.id) return;
+    // Guard client-side: should not happen if button was disabled
+    const hasOrder = Boolean(deleteLine?.orden_produccion_id ?? deleteLine?.orden_id ?? deleteLine?.ordenes_produccion_id ?? deleteLine?.produccion_id ?? deleteLine?.produccionId);
+    const createdFlag = (deleteLine?.produccion_creada === true);
+    if (hasOrder || createdFlag) {
+      toast.error('No se puede eliminar: línea con orden de producción asociada');
+      setDeleteModalOpen(false);
+      return;
+    }
+    const ok = window.confirm('¿Eliminar línea? Esta acción no se puede deshacer.');
+    if (!ok) return;
+    setDeleteSubmitting(true);
+    try {
+      const endpoint = `/pedidos-venta/${selectedPedido.id}/lineas/${deleteLine.id}`;
+      const resp = await apiFetch(endpoint, { method: 'DELETE' });
+      // El backend devuelve el pedido actualizado en caso de éxito
+      if (resp) {
+        try {
+          // si resp parece ser el pedido actualizado
+          const updated = resp;
+          setSelectedPedido(updated);
+          // actualizar listado de pedidos también
+          setPedidos((list) => (Array.isArray(list) ? list.map((p: any) => (p.id === updated.id ? updated : p)) : list));
+        } catch (e) {
+          // fallback: recargar detalle
+          await openDetalle(selectedPedido.id);
+        }
+      } else {
+        await openDetalle(selectedPedido.id);
+      }
+      toast.success('Línea eliminada');
+      setDeleteModalOpen(false);
+      setDeleteLine(null);
+    } catch (err: any) {
+      console.error('Error eliminando línea', err);
+      const raw = String(err?.message || err || '').toLowerCase();
+      if (raw.includes('401') || raw.includes('token') || raw.includes('no autorizado') || raw.includes('unauthorized')) {
+        toast.error('No autorizado. Por favor inicia sesión.');
+        navigate('/login', { replace: true });
+        return;
+      }
+      // si el backend indica que no se puede borrar por orden asociada
+      if (raw.includes('orden') && (raw.includes('asociada') || raw.includes('already') || raw.includes('cannot'))) {
+        toast.error(parseApiError(err) || 'No se puede eliminar: línea con orden de producción asociada');
+        // refrescar estado del pedido en caso de cambio de concurrencia
+        try { await openDetalle(selectedPedido.id); } catch (e) { /* ignore */ }
+        return;
+      }
+      if (raw.includes('404') || raw.includes('no encontrada') || raw.includes('not found')) {
+        toast.error('Línea o pedido no encontrado. Refrescando vista.');
+        try { await openDetalle(selectedPedido.id); } catch (e) { /* ignore */ }
+        return;
+      }
+      const friendly = parseApiError(err) || (err?.message ?? 'Error eliminando la línea');
+      toast.error(friendly);
+    } finally {
+      setDeleteSubmitting(false);
     }
   }
 
@@ -411,17 +1023,17 @@ export default function Pedidos() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {visiblePedidos.map((p: any) => (
-                    <TableRow key={p.id || JSON.stringify(p)} className="hover:bg-muted/50">
+                  {sortPedidosByDateDesc(visiblePedidos).map((p: any) => (
+                    <TableRow key={p.id || JSON.stringify(p)} className={getRowClasses(p)}>
                       <TableCell className="font-mono text-sm">{p.id ?? '-'}</TableCell>
                       <TableCell>{fmtCliente(p)}</TableCell>
                       <TableCell>{fmtFecha(p)}</TableCell>
                       <TableCell>
                         <div className="inline-flex items-center gap-2">
-                          <Badge variant={estadoColor(fmtEstado(p)) as any}>{fmtEstado(p)}</Badge>
+                          <Badge className="px-2 py-0.5" variant={estadoColor(fmtEstado(p)) as any}>{fmtEstado(p)}</Badge>
                             {fmtEstado(p).toString().toLowerCase() === 'completado' && (
                               isPedidoPaid(p) ? (
-                                <Badge className="ml-2" variant="green">Pagado</Badge>
+                                <Badge className="ml-2 bg-green-600 text-white" variant="default">Pagado</Badge>
                               ) : (
                                 <Badge className="ml-2" variant="destructive">Sin pago</Badge>
                               )
@@ -450,7 +1062,7 @@ export default function Pedidos() {
 
         {/* Detalle del pedido en modal */}
         <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-    <DialogContent className="w-full max-w-6xl sm:max-w-5xl">
+    <DialogContent className="w-full max-w-6xl sm:max-w-5xl bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow-lg border border-slate-100">
             <DialogHeader>
               <DialogTitle>Detalle del pedido {selectedPedido?.id ?? ''}</DialogTitle>
               <DialogDescription>
@@ -469,7 +1081,13 @@ export default function Pedidos() {
               {detailLoading ? (
                 <div>Cargando detalle...</div>
               ) : selectedPedido ? (
-                <div className="space-y-4">
+                  <div className={`space-y-4 ${showPaymentInline ? 'hidden' : ''}`}>
+                  <div className="flex justify-between items-center">
+                    <div />
+                    <div>
+                      <Button size="sm" variant="outline" onClick={async () => { await loadProductosOptions(); setAddProductId(null); setAddPresentacionId(null); setAddPrecio(null); setAddCantidad(1); setAddModalOpen(true); }}>Agregar producto</Button>
+                    </div>
+                  </div>
                   <div className="overflow-auto">
                     <table className="w-full table-auto text-sm">
                       <thead>
@@ -487,10 +1105,89 @@ export default function Pedidos() {
                           <tr key={it.id} className="border-t">
                             <td className="py-2 w-16">
                               <div className="w-12 h-12 rounded overflow-hidden bg-gray-100">
-                                <img src={it.image_url || it.image || ''} alt={it.producto_nombre || ''} className="w-full h-full object-cover" />
+                                <img src={getImageUrl(it)} alt={it.producto_nombre || ''} className="w-full h-full object-cover" onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; }} />
                               </div>
                             </td>
-                            <td className="py-2">{it.producto_nombre || it.nombre || '-'}</td>
+                            <td className="py-2 align-top">
+                              <div className="font-medium">{it.producto_nombre || it.nombre || '-'}</div>
+                                <div className="text-xs text-muted-foreground mt-1">
+                                {(() => {
+                                  // Mostrar componentes asociados a la línea (si vienen) y/o componentes de la orden de producción referenciada
+                                  const compsFromLine = Array.isArray(it?.componentes) ? it.componentes.map((c: any) => {
+                                    const unit = Number(c?.cantidad_por_unidad ?? c?.cantidad ?? 0) || 0;
+                                    const total = Number(c?.cantidad_total ?? (unit * Number(it?.cantidad ?? 1))) || 0;
+                                    return {
+                                      id: Number(c?.materia_prima_id ?? c?.id ?? 0) || null,
+                                      nombre: c?.materia_prima_nombre ?? c?.materia_nombre ?? c?.nombre ?? null,
+                                      unidad: c?.unidad ?? c?.u ?? '',
+                                      cantidad: total,
+                                    };
+                                  }) : [];
+
+                                  const refId = Number(it?.orden_id ?? it?.orden_produccion_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId ?? null);
+                                  let compsFromOrder: any[] = [];
+                                  if (Number.isFinite(refId) && refId > 0) {
+                                    const od = ordenDetailsMap[refId];
+                                    const ordObj = od?.orden ?? od ?? {};
+                                    const compList = Array.isArray(od?.componentes) ? od.componentes : (Array.isArray(ordObj?.componentes) ? ordObj.componentes : []);
+                                    if (Array.isArray(compList) && compList.length > 0) {
+                                      compsFromOrder = compList.map((c: any) => {
+                                        const cantidadPorUnidad = Number(c?.cantidad_por_unidad ?? c?.cantidad ?? 0) || 0;
+                                        const cantidadTotal = Number(c?.cantidad_total ?? (cantidadPorUnidad * Number(ordObj?.cantidad ?? 0))) || 0;
+                                        return {
+                                          id: Number(c?.materia_prima_id ?? c?.id ?? 0) || null,
+                                          nombre: c?.materia_prima_nombre ?? c?.materia_nombre ?? c?.nombre ?? null,
+                                          unidad: c?.unidad ?? c?.u ?? '',
+                                          cantidad: cantidadTotal,
+                                        };
+                                      });
+                                    }
+                                  }
+
+                                  const combined = [...(compsFromLine || []), ...(compsFromOrder || [])];
+                                  if (combined.length > 0) {
+                                    return (
+                                      <div className="mt-1 text-xs space-y-1">
+                                        {combined.map((c: any) => {
+                                          const cid = Number(c?.id ?? c?.materia_prima_id ?? 0) || 0;
+                                          const fallbackName = c?.materia_prima_nombre ?? c?.materia_nombre ?? c?.nombre ?? null;
+                                          const resolvedName = (cid && materiasCostMap && materiasCostMap[cid] && (materiasCostMap[cid].nombre || materiasCostMap[cid].nombre)) ? (materiasCostMap[cid].nombre) : (fallbackName ?? null);
+                                          const displayName = resolvedName ?? `ID ${cid || ''}`;
+                                          return (
+                                            <div key={String(cid || displayName)} className="flex justify-between">
+                                              <div className="break-words">{displayName}</div>
+                                              <div className="text-right">{Number(c.cantidad || 0).toFixed(2)} {c.unidad ?? ''}</div>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    );
+                                  }
+
+                                  // No hay componentes disponibles: mostrar botón para producir
+                                  return (
+                                    <div className="mt-2 flex items-center gap-2">
+                                      <Button size="sm" variant="outline" onClick={() => openProduceModalForLine(it)}>Producir</Button>
+                                      {/* Botón eliminar línea (solo si no tiene orden de producción asociada) */}
+                                      {(() => {
+                                        const hasOrder = Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
+                                        const createdFlag = (it?.produccion_creada === true);
+                                        const canDelete = !hasOrder && !createdFlag;
+                                        return (
+                                          <Button
+                                            size="sm"
+                                            variant="destructive"
+                                            onClick={(e) => { e.stopPropagation(); setDeleteLine(it); setDeleteModalOpen(true); }}
+                                            disabled={!canDelete}
+                                            title={canDelete ? 'Eliminar línea' : 'No se puede eliminar: orden de producción asociada'}
+                                          >Eliminar</Button>
+                                        );
+                                      })()}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            </td>
                             <td className="py-2">{typeof it.precio_venta === 'number' ? `$${it.precio_venta.toFixed(2)}` : it.precio_venta}</td>
                             <td className="py-2">{typeof it.costo === 'number' ? `$${it.costo.toFixed(2)}` : it.costo}</td>
                             <td className="py-2">{it.cantidad}</td>
@@ -537,15 +1234,35 @@ export default function Pedidos() {
                           const banco = pay?.banco_nombre ?? pay?.banco?.nombre ?? pay?.banco_id ?? '—';
                           const ref = pay?.referencia ?? pay?.ref ?? '';
                           const fecha = pay?.fecha_transaccion ?? pay?.created_at ?? pay?.createdAt ?? '';
+                          // Determinar símbolo/etiqueta de moneda para el pago
+                          const simbolo = pay?.tasa_simbolo ?? (pay?.tasa && pay.tasa.simbolo) ?? pay?.banco?.moneda ?? selectedPedido?.tasa_simbolo ?? 'Bs';
+                          const montoStr = Number.isFinite(monto) ? `${simbolo} ${monto.toFixed(2)}` : String(monto);
                           return (
                             <div key={idx} className="p-2 border rounded bg-gray-50">
                               <div className="flex justify-between items-center">
                                 <div>
-                                  <div className="font-medium">{typeof monto === 'number' ? `$${monto.toFixed(2)}` : monto}</div>
+                                  <div className="font-medium">{montoStr}</div>
                                   <div className="text-xs text-gray-500">{forma} {banco ? `— ${banco}` : ''}</div>
                                 </div>
                                 <div className="text-right">
-                                  <div className="text-sm">Equiv.: {equiv !== null && equiv !== undefined ? (Number.isFinite(Number(equiv)) ? Number(equiv).toFixed(2) : equiv) : '—'}</div>
+                                  {/* Equivalencia: preferir campo explícito, si no existe calcular como monto / tasa */}
+                                  {(() => {
+                                    try {
+                                      const tasaCand = pay?.tasa_monto ?? pay?.tasa ?? pay?.tasa_cambio_monto ?? selectedPedido?.tasa_cambio_monto ?? selectedPedido?.tasa ?? null;
+                                      const tasaNum = typeof tasaCand === 'number' ? tasaCand : (tasaCand ? Number(String(tasaCand).replace(',', '.')) : null);
+                                      let computed: number | null = null;
+                                      if (equiv !== null && equiv !== undefined && Number.isFinite(Number(equiv))) {
+                                        computed = Number(equiv);
+                                      } else if (Number.isFinite(monto) && Number.isFinite(tasaNum) && tasaNum !== 0) {
+                                        computed = monto / tasaNum;
+                                      }
+                                      return (
+                                        <div className="text-sm">Equiv.: {computed !== null && Number.isFinite(computed) ? computed.toFixed(2) : '—'}</div>
+                                      );
+                                    } catch (e) {
+                                      return <div className="text-sm">Equiv.: —</div>;
+                                    }
+                                  })()}
                                   {ref && <div className="text-xs text-gray-500">ref: {ref}</div>}
                                   {fecha && <div className="text-xs text-gray-500">{String(fecha)}</div>}
                                 </div>
@@ -559,101 +1276,206 @@ export default function Pedidos() {
 
                   {/* Formulario compacto para añadir pago directamente (útil cuando pedido ya está completado) */}
                   {selectedPedido && selectedPedido.estado === 'Completado' && (
-                    <div className="mt-4 p-4 bg-white border rounded">
-                      <div className="font-medium mb-2">Registrar pago adicional</div>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                        <div>
-                          <label className="block text-xs">Monto</label>
-                          <input type="number" step="0.01" className="mt-1 w-full border rounded px-2 py-1" value={directMonto} onChange={(e) => setDirectMonto(e.target.value)} />
-                        </div>
-                        <div>
-                          <label className="block text-xs">Forma</label>
-                          <select className="mt-1 w-full border rounded px-2 py-1" value={directFormaId ?? ''} onChange={(e) => setDirectFormaId(e.target.value ? Number(e.target.value) : null)}>
-                            <option value="">-- forma --</option>
-                            {directFormas.map((f: any) => <option key={f.id} value={f.id}>{f.nombre ?? f.name}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs">Banco</label>
-                          <select className="mt-1 w-full border rounded px-2 py-1" value={directBancoId ?? ''} onChange={(e) => setDirectBancoId(e.target.value ? Number(e.target.value) : null)}>
-                            <option value="">-- banco (opcional) --</option>
-                            {directBancos.map((b: any) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="block text-xs">Referencia</label>
-                          <input type="text" className="mt-1 w-full border rounded px-2 py-1" value={directReferencia} onChange={(e) => setDirectReferencia(e.target.value)} />
-                        </div>
-                        <div>
-                          <label className="block text-xs">Fecha</label>
-                          <input type="date" className="mt-1 w-full border rounded px-2 py-1" value={directFecha} onChange={(e) => setDirectFecha(e.target.value)} />
-                        </div>
-                        <div className="sm:col-span-3 text-right">
-                          <Button size="sm" onClick={async () => {
-                            if (!selectedPedido?.id) return;
-                            const m = Number(String(directMonto).replace(',', '.'));
-                            if (!Number.isFinite(m) || m <= 0) { toast.error('Monto inválido'); return; }
-                            if (!directFormaId) { toast.error('Selecciona forma de pago'); return; }
-                            setDirectLoading(true);
-                            try {
-                            const payload: any = { pedido_venta_id: selectedPedido.id, forma_pago_id: directFormaId, monto: m };
-                              if (directBancoId) payload.banco_id = directBancoId;
-                              if (directReferencia) payload.referencia = directReferencia;
+                    isPedidoPaid(selectedPedido) ? (
+                      <div className="mt-4 p-4 bg-green-50 border rounded text-sm text-green-800">
+                        <div className="font-medium">Pedido pagado</div>
+                        <div>El pedido ya está pagado en su totalidad. No se pueden registrar pagos adicionales.</div>
+                      </div>
+                    ) : (
+                      <div className="mt-4 p-4 bg-white border rounded">
+                        <div className="font-medium mb-2">Registrar pago adicional</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                          <div>
+                            <label className="block text-xs">Monto</label>
+                            <input type="number" step="0.01" className="mt-1 w-full border rounded px-2 py-1" value={directMonto} onChange={(e) => setDirectMonto(e.target.value)} />
+                          </div>
+                          <div>
+                            <label className="block text-xs">Forma</label>
+                            <select className="mt-1 w-full border rounded px-2 py-1" value={directFormaId ?? ''} onChange={(e) => setDirectFormaId(e.target.value ? Number(e.target.value) : null)}>
+                              <option value="">-- forma --</option>
+                              {directFormas.map((f: any) => <option key={f.id} value={f.id}>{f.nombre ?? f.name}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs">Banco</label>
+                            <select className="mt-1 w-full border rounded px-2 py-1" value={directBancoId ?? ''} onChange={(e) => setDirectBancoId(e.target.value ? Number(e.target.value) : null)}>
+                              <option value="">-- banco (opcional) --</option>
+                              {directBancos.map((b: any) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs">Referencia</label>
+                            <input type="text" className="mt-1 w-full border rounded px-2 py-1" value={directReferencia} onChange={(e) => setDirectReferencia(e.target.value)} />
+                          </div>
+                          <div>
+                            <label className="block text-xs">Fecha</label>
+                            <input type="date" className="mt-1 w-full border rounded px-2 py-1" value={directFecha} onChange={(e) => setDirectFecha(e.target.value)} />
+                          </div>
+                          <div className="sm:col-span-3 text-right">
+                            <Button size="sm" onClick={async () => {
+                              if (!selectedPedido?.id) return;
+                              // Protección: si el pedido ya está pagado completamente, no permitir crear pagos
+                              if (isPedidoPaid(selectedPedido)) { toast.error('El pedido ya está pagado en su totalidad.'); return; }
+                              const m = Number(String(directMonto).replace(',', '.'));
+                              // Validaciones
+                              if (!directFormaId || !Number.isInteger(Number(directFormaId))) { toast.error('Seleccione una forma de pago válida.'); return; }
+                              if (!Number.isFinite(m) || m <= 0) { toast.error('El monto debe ser un número mayor que 0.'); return; }
+                              const forma = directFormas.find((f: any) => Number(f.id) === Number(directFormaId));
+                              const nombre = String(forma?.nombre || forma?.name || '').toLowerCase();
+                              const requiresBank = nombre.includes('transfer') || nombre.includes('transferencia') || nombre.includes('pago movil') || nombre.includes('pago móvil') || nombre.includes('zelle') || nombre.includes('spei');
+                              if (requiresBank && (!directBancoId || !Number.isInteger(Number(directBancoId)))) { toast.error('Seleccione un banco para esta forma de pago.'); return; }
+                              if (directReferencia && String(directReferencia).length > 255) { toast.error('Referencia demasiado larga'); return; }
                               if (directFecha) {
-                                try {
-                                  const now = new Date();
-                                  const hh = String(now.getHours()).padStart(2, '0');
-                                  const mm = String(now.getMinutes()).padStart(2, '0');
-                                  const ss = String(now.getSeconds()).padStart(2, '0');
-                                  const iso = new Date(`${directFecha}T${hh}:${mm}:${ss}`);
-                                  payload.fecha_transaccion = iso.toISOString();
-                                } catch (err) {
-                                  payload.fecha_transaccion = new Date().toISOString();
-                                }
+                                const d = new Date(directFecha);
+                                if (isNaN(d.getTime())) { toast.error('Fecha de transacción inválida.'); return; }
                               }
-                              // Debug: registrar payload enviado
-                              try {
-                                // Log payload to console for debugging
-                                // eslint-disable-next-line no-console
-                                console.debug('create-pago-payload', payload);
-                                await createPago(payload);
-                              } catch (err: any) {
-                                // intentar fallback: algunos backends esperan { pago: { ... } }
-                                // eslint-disable-next-line no-console
-                                console.debug('create-pago-failed, intentando fallback', { err });
-                                const msg = (err && err.message) ? String(err.message).toLowerCase() : '';
+
+                              // Comprobar tasa para el banco si aplica
+                              if (directBancoId) {
                                 try {
-                                  if (msg.includes('pago') || err?.status === 400) {
-                                    // intentar enviar envuelto
-                                    await apiFetch(`/pagos`, { method: 'POST', body: JSON.stringify({ pago: payload }) });
-                                    // eslint-disable-next-line no-console
-                                    console.debug('create-pago-fallback-success');
-                                  } else {
-                                    throw err;
+                                  const banco = directBancos.find((b: any) => Number(b.id) === Number(directBancoId));
+                                  const moneda = banco?.moneda ?? banco?.currency ?? null;
+                                  let hasTasa = false;
+                                  if (moneda) {
+                                    const t = await getTasaBySimbolo(String(moneda));
+                                    if (t && Number.isFinite(Number(t.monto)) && Number(t.monto) > 0) hasTasa = true;
+                                    else {
+                                      try {
+                                        const all = await getTasasCambio();
+                                        const list = Array.isArray(all) ? all : (all?.data || []);
+                                        const clean = (s: any) => String(s || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+                                        const target = clean(moneda);
+                                        for (const it of list) {
+                                          const s = clean(it.simbolo ?? it.simbol ?? it.symbol ?? '');
+                                          if (!s) continue;
+                                          if (s === target || s.includes(target) || target.includes(s)) {
+                                            if (Number.isFinite(Number(it.monto)) && Number(it.monto) > 0) { hasTasa = true; break; }
+                                          }
+                                        }
+                                      } catch (e) { console.debug(e); }
+                                    }
                                   }
-                                } catch (err2: any) {
-                                  // rethrow original for outer catch handling
-                                  throw err;
-                                }
+                                  if (!hasTasa) {
+                                    const ok = window.confirm(`No hay tasa activa para la moneda ${moneda || 'desconocida'}. ¿Desea continuar?`);
+                                    if (!ok) return;
+                                  }
+                                } catch (e) { const ok = window.confirm('No se pudo comprobar la tasa del banco. ¿Desea continuar?'); if (!ok) return; }
                               }
-                              toast.success('Pago registrado');
-                              // refrescar detalle
-                              const fresh = await getPedidoVenta(selectedPedido.id);
-                              setSelectedPedido(fresh);
-                            } catch (err: any) {
-                              console.error('Error creando pago', err);
-                              toast.error(parseApiError(err) || (err?.message ?? 'Error creando pago'));
-                            } finally {
-                              setDirectLoading(false);
-                              // limpiar campos
-                              setDirectMonto(''); setDirectReferencia(''); setDirectFecha(''); setDirectBancoId(null); setDirectFormaId(null);
-                            }
-                          }} disabled={directLoading}>
-                            {directLoading ? 'Enviando...' : 'Registrar pago'}
-                          </Button>
+
+                              setDirectLoading(true);
+                              try {
+                                const payload: any = { pedido_venta_id: selectedPedido.id, forma_pago_id: directFormaId, monto: m };
+                                if (directBancoId) payload.banco_id = directBancoId;
+                                if (directReferencia) payload.referencia = directReferencia;
+                                if (directFecha) {
+                                  try {
+                                    const now = new Date();
+                                    const hh = String(now.getHours()).padStart(2, '0');
+                                    const mm = String(now.getMinutes()).padStart(2, '0');
+                                    const ss = String(now.getSeconds()).padStart(2, '0');
+                                    const iso = new Date(`${directFecha}T${hh}:${mm}:${ss}`);
+                                    payload.fecha_transaccion = iso.toISOString();
+                                  } catch (err) {
+                                    payload.fecha_transaccion = new Date().toISOString();
+                                  }
+                                }
+                                // Debug: registrar payload enviado
+                                try {
+                                  // asegurar client_uid en payload para idempotencia backend
+                                  payload.client_uid = payload.client_uid ?? makeClientUid();
+                                  // Adjuntar tasa/moneda detectada para este banco/forma si está disponible
+                                  try {
+                                    let monedaDetected: string | null = null;
+                                    // Priorizar moneda indicada en la forma de pago (directFormas[].detalles)
+                                    try {
+                                      const formaObj = directFormas.find((f: any) => Number(f.id) === Number(directFormaId));
+                                      const detalles = formaObj?.detalles ?? null;
+                                      if (detalles) {
+                                        if (typeof detalles === 'string') {
+                                          try { const parsed = JSON.parse(detalles); monedaDetected = parsed?.moneda ?? parsed?.simbolo ?? parsed?.symbol ?? detalles; } catch (e) { monedaDetected = detalles; }
+                                        } else if (typeof detalles === 'object') {
+                                          monedaDetected = detalles?.moneda ?? detalles?.simbolo ?? detalles?.symbol ?? null;
+                                        }
+                                      }
+                                    } catch (e) { console.debug(e); }
+                                    // Si no hay moneda en la forma, fallback a la del banco
+                                    if (!monedaDetected && payload.banco_id) {
+                                      const banco = directBancos.find((b: any) => Number(b.id) === Number(payload.banco_id));
+                                      monedaDetected = banco?.moneda ?? banco?.currency ?? null;
+                                    }
+                                    // fallback a moneda del pedido
+                                    if (!monedaDetected && selectedPedido) {
+                                      monedaDetected = selectedPedido?.tasa_simbolo ?? selectedPedido?.tasa?.simbolo ?? null;
+                                    }
+                                    if (monedaDetected) {
+                                      const clean = String(monedaDetected).toUpperCase().replace(/[^A-Z0-9]/g, '') || null;
+                                      payload.moneda = clean;
+                                      const tobj = await getTasaBySimbolo(clean);
+                                      if (tobj && Number.isFinite(Number(tobj.monto))) {
+                                        payload.tasa = Number(tobj.monto);
+                                        payload.tasa_simbolo = clean;
+                                        payload.tasa_monto = Number(tobj.monto);
+                                      }
+                                    }
+                                  } catch (e) { console.debug(e); }
+                                  // Log payload to console for debugging
+                                   
+                                  console.debug('create-pago-payload', payload);
+                                  // Evitar crear duplicados idénticos en vuelo
+                                  const key = JSON.stringify(payload);
+                                  if (directInFlight.current.has(key)) {
+                                    console.debug('create-pago-skip-duplicate-inflight', { payload });
+                                  } else {
+                                    directInFlight.current.add(key);
+                                    try {
+                                      // Intentar endpoint específico por pedido primero
+                                      try {
+                                        await apiFetch(`/pedidos-venta/${selectedPedido.id}/pagos`, { method: 'POST', body: JSON.stringify(payload) });
+                                        console.debug('create-pago-pedidos-success');
+                                      } catch (errInner) {
+                                        console.debug('create-pago-pedidos-failed, intentando /pagos directo', { errInner });
+                                        try {
+                                          await apiFetch('/pagos', { method: 'POST', body: JSON.stringify(payload) });
+                                          console.debug('create-pago-pagos-direct-success');
+                                        } catch (err2) {
+                                          console.debug('create-pago-pagos-direct-failed, intentando fallback envuelto', { err2 });
+                                          await apiFetch('/pagos', { method: 'POST', body: JSON.stringify({ pago: payload }) });
+                                          console.debug('create-pago-fallback-success');
+                                        }
+                                      }
+                                    } finally {
+                                      try { directInFlight.current.delete(key); } catch (e) { console.debug(e); }
+                                    }
+                                  }
+                                  } catch (err: any) { console.debug(err); }
+                                toast.success('Pago registrado');
+                                // refrescar detalle y obtener pagos por pedido
+                                const fresh = await getPedidoVenta(selectedPedido.id);
+                                try {
+                                  const pagos = await getPagosByPedido(selectedPedido.id);
+                                  if (Array.isArray(pagos)) fresh.pagos = pagos;
+                                  else if (pagos && Array.isArray((pagos as any).data)) fresh.pagos = (pagos as any).data;
+                                } catch (e) {
+                                  console.debug(e);
+                                }
+                                setSelectedPedido(fresh);
+                                // Actualizar el mapa de pagos global para que el listado refleje el nuevo pago
+                                try { await refreshPagosMap(); } catch (e) { console.debug(e); }
+                              } catch (err: any) {
+                                console.error('Error creando pago', err);
+                                toast.error(parseApiError(err) || (err?.message ?? 'Error creando pago'));
+                              } finally {
+                                setDirectLoading(false);
+                                // limpiar campos
+                                setDirectMonto(''); setDirectReferencia(''); setDirectFecha(''); setDirectBancoId(null); setDirectFormaId(null);
+                              }
+                            }} disabled={directLoading}>
+                              {directLoading ? 'Enviando...' : 'Registrar pago'}
+                            </Button>
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    )
                   )}
                 </div>
               ) : (
@@ -661,12 +1483,131 @@ export default function Pedidos() {
               )}
             </div>
 
+            {/* Modal para agregar producto al pedido */}
+            <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
+              <DialogContent className="max-w-md bg-gradient-to-br from-white to-rose-50 rounded-lg shadow-lg border border-rose-100">
+                <DialogHeader>
+                  <DialogTitle>Agregar producto</DialogTitle>
+                  <DialogDescription>Agregar un nuevo producto a este pedido.</DialogDescription>
+                </DialogHeader>
+                <div className="p-2 space-y-3">
+                  <div>
+                    <label className="text-sm">Producto</label>
+                    <select className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addProductId ?? ''} onChange={async (e) => { const v = e.target.value ? Number(e.target.value) : null; setAddProductId(v); if (v) await loadPresentacionesForProduct(v); else { setPresentacionesOptions([]); setAddPresentacionId(null); setAddPrecio(null); } }}>
+                      <option value="">-- selecciona un producto --</option>
+                      {productosOptions.map((pr: any) => (
+                        <option key={pr.id} value={pr.id}>{pr.nombre ?? pr.name ?? pr.producto_nombre ?? `#${pr.id}`}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-sm">Presentación</label>
+                    <select className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addPresentacionId ?? ''} onChange={(e) => { const v = e.target.value ? Number(e.target.value) : null; setAddPresentacionId(v); const sel = presentacionesOptions.find((p) => Number(p.id) === Number(v)); setAddPrecio(sel ? (sel.precio_venta ?? null) : null); }}>
+                      <option value="">-- selecciona presentación --</option>
+                      {presentacionesOptions.map((pr: any) => (
+                        <option key={pr.id} value={pr.id}>{pr.nombre ?? `#${pr.id}`} {pr.precio_venta ? ` — ${pr.precio_venta}` : ''}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-sm">Cantidad</label>
+                    <input type="number" min={0.01} step={0.01} className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addCantidad} onChange={(e) => setAddCantidad(Number(String(e.target.value).replace(',', '.')))} />
+                  </div>
+                  <div>
+                    <label className="text-sm">Precio unitario (desde presentación)</label>
+                    <input type="number" readOnly className="w-full mt-1 border rounded px-2 py-1 bg-gray-100" value={(addPrecio !== null && addPrecio !== undefined) ? addPrecio : ''} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setAddModalOpen(false)} disabled={addSubmitting} className="hover:bg-rose-50">Cancelar</Button>
+                  <Button disabled={addSubmitting} onClick={async () => {
+                    if (!selectedPedido?.id) return;
+                    if ((selectedPedido?.estado || '').toString().toLowerCase() === 'completado' || (selectedPedido?.estado || '').toString().toLowerCase() === 'cancelado') {
+                      toast.error('No se pueden agregar líneas a un pedido completado o cancelado');
+                      return;
+                    }
+                    if (!addProductId) { toast.error('Seleccione un producto'); return; }
+                    if (!addCantidad || Number(addCantidad) <= 0) { toast.error('Ingrese una cantidad válida'); return; }
+                    // Si se seleccionó presentación, validar pertenece al producto
+                    if (addPresentacionId) {
+                      const ok = presentacionesOptions.find((p) => Number(p.id) === Number(addPresentacionId));
+                      if (!ok) { toast.error('La presentación seleccionada no pertenece al producto'); return; }
+                    }
+                    setAddSubmitting(true);
+                    const line: any = { producto_id: Number(addProductId), cantidad: Number(addCantidad) };
+                    if (addPresentacionId) line.formula_id = Number(addPresentacionId);
+                    // incluir precio_unitario si fue seleccionado desde la presentación
+                    if (addPrecio !== null && addPrecio !== undefined) line.precio_venta = Number(addPrecio);
+                    // mapear presentación/tamaño si aplica (tamano_id puede ser distinto dependiendo del backend)
+                    if (addPresentacionId) line.tamano_id = Number(addPresentacionId);
+                    // incluir snapshot nombre_producto para mayor compatibilidad (opcional)
+                    try {
+                      const prod = productosOptions.find((p: any) => Number(p.id) === Number(addProductId));
+                      if (prod && (prod.nombre || prod.name || prod.producto_nombre)) line.nombre_producto = prod.nombre ?? prod.name ?? prod.producto_nombre;
+                    } catch (e) { /* ignore */ }
+                    const payload = { productos: [ line ] };
+                    try {
+                      console.debug('ADD-PEDIDO request', { endpoint: `/pedidos-venta/${selectedPedido.id}/items`, payload });
+                      await apiFetch(`/pedidos-venta/${selectedPedido.id}/items`, { method: 'POST', body: JSON.stringify(payload) });
+                      toast.success('Producto agregado');
+                      setAddModalOpen(false);
+                      await openDetalle(selectedPedido.id);
+                    } catch (err: any) {
+                      console.error('Error agregando producto al pedido', err);
+                      // Si el backend falla por ausencia de columna producto_id, reintentar con producto_terminado_id
+                      const raw = String(err?.message || err || '').toLowerCase();
+                      if (raw.includes('column "producto_id" does not exist') || raw.includes('column \"producto_id\" does not exist') || raw.includes('producto_id')) {
+                        try {
+                          const altLine: any = { cantidad: Number(addCantidad) };
+                          // usar producto_terminado_id como fallback para tablas que nombran la columna así
+                          altLine.producto_terminado_id = Number(addProductId);
+                          if (addPresentacionId) altLine.formula_id = Number(addPresentacionId);
+                          const altPayload = { productos: [altLine] };
+                          console.debug('ADD-PEDIDO retry with producto_terminado_id', { endpoint: `/pedidos-venta/${selectedPedido.id}/items`, altPayload });
+                          await apiFetch(`/pedidos-venta/${selectedPedido.id}/items`, { method: 'POST', body: JSON.stringify(altPayload) });
+                          toast.success('Producto agregado (fallback producto_terminado_id)');
+                          setAddModalOpen(false);
+                          await openDetalle(selectedPedido.id);
+                        } catch (err2: any) {
+                          console.error('Fallback adding product also failed', err2);
+                          const friendly = parseApiError(err2) || (err2?.message ?? 'No se pudo agregar el producto (fallback)');
+                          toast.error(friendly);
+                        } finally {
+                          setAddSubmitting(false);
+                        }
+                        return;
+                      }
+
+                      // intentar extraer mensaje JSON si existe
+                      let friendly = parseApiError(err) || (err?.message ?? 'No se pudo agregar el producto');
+                      try {
+                        const txt = String(err?.message || err || '');
+                        const parsed = JSON.parse(txt);
+                        if (parsed && parsed.error) friendly = parsed.error;
+                      } catch (e) {
+                        // noop
+                      }
+                      // Si el error advierte sobre migraciones o columnas faltantes, añadir hint
+                      if (raw.includes('column') && raw.includes('does not exist')) {
+                        friendly += '. Posible esquema desactualizado: ejecutar migraciones en backend.';
+                      }
+                      toast.error(friendly);
+                    } finally {
+                      setAddSubmitting(false);
+                    }
+                  }} className="bg-rose-600 hover:bg-rose-700 text-white">{addSubmitting ? 'Enviando...' : 'Agregar'}</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
             {/* Formulario de registro de pago embebido en el detalle del pedido (se muestra dentro del dialog) */}
             {selectedPedido && showPaymentInline && (
               <div className="mt-4 p-0">
                 <PaymentByBank
                   pedidoId={selectedPedido?.id ?? 0}
-                  onSuccess={(data: any) => {
+                  onSuccess={async (data: any) => {
+                    // Asegurar que actualizamos pagosMap para que el listado muestre 'Pagado'
+                    try { await refreshPagosMap(); } catch (e) { console.debug(e); }
                     toast.success('Pedido completado y pago registrado');
                     setSelectedPedido((s: any) => s ? { ...s, estado: 'Completado' } : s);
                     setPedidos((list) => list.map((p) => (p.id === selectedPedido?.id ? { ...p, estado: 'Completado' } : p)));
@@ -675,31 +1616,135 @@ export default function Pedidos() {
                   }}
                   onClose={() => setShowPaymentInline(false)}
                 />
+                <div className="mt-3">
+                  <Button variant="outline" onClick={() => setShowPaymentInline(false)}>Volver al pedido</Button>
+                </div>
               </div>
             )}
 
             <DialogFooter>
               <div className="w-full flex flex-col md:flex-row items-center justify-between gap-2">
                 <div className="flex gap-2">
-                    <Button size="lg" variant="default" onClick={() => setShowPaymentInline(true)} disabled={selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado'}>
-                      Registrar pago y completar
-                    </Button>
+                    <Button size="lg" variant="default" onClick={() => {
+                        // abrir formulario de pago pero bloquear si hay líneas pendientes por producir
+                        if (hasPendingProductionLines(selectedPedido)) {
+                          toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+                          return;
+                        }
+                        setShowPaymentInline(true);
+                      }} disabled={selectedPedido?.estado === 'Cancelado' || isPedidoPaid(selectedPedido) || hasPendingProductionLines(selectedPedido)} className="bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white">
+                        Registrar pago y completar
+                      </Button>
                     {selectedPedido?.estado === 'Completado' && (
                       <Button size="lg" variant="outline" onClick={() => setShowPaymentsView(true)}>
                         Ver pagos
                       </Button>
                     )}
-                  <Button size="lg" variant="destructive" onClick={completarSinPago} disabled={completing || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado'}>
+                  <Button size="lg" variant="destructive" onClick={completarSinPago} disabled={completing || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado' || hasPendingProductionLines(selectedPedido)}>
                     {completing ? 'Procesando...' : 'Completar sin registrar pago'}
                   </Button>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={handleCancelarPedido} disabled={canceling || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado'}>
+                  <Button variant="outline" onClick={handleCancelarPedido} disabled={canceling || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado'} className="hover:bg-slate-50">
                     {canceling ? 'Procesando...' : 'Cancelar pedido'}
                   </Button>
                   <Button variant="ghost" onClick={closeDetalle}>Cerrar</Button>
                 </div>
               </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal de confirmación para eliminar línea */}
+        <Dialog open={deleteModalOpen} onOpenChange={setDeleteModalOpen}>
+          <DialogContent className="max-w-md bg-white rounded-lg shadow-lg border">
+            <DialogHeader>
+              <DialogTitle>Eliminar línea</DialogTitle>
+              <DialogDescription>Confirme la eliminación de la línea del pedido. Esta acción no se puede deshacer.</DialogDescription>
+            </DialogHeader>
+            <div className="p-2">
+              <div className="text-sm">{deleteLine ? `${deleteLine.producto_nombre || deleteLine.nombre || 'Línea #' + deleteLine.id}` : '¿Eliminar esta línea?'} </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setDeleteModalOpen(false); setDeleteLine(null); }} disabled={deleteSubmitting}>Cancelar</Button>
+              <Button variant="destructive" onClick={handleDeleteLineConfirmed} disabled={deleteSubmitting}>{deleteSubmitting ? 'Eliminando...' : 'Eliminar'}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        {/* Modal para producir desde una línea del pedido */}
+        <Dialog open={prodModalOpen} onOpenChange={setProdModalOpen}>
+          <DialogContent className="max-w-lg bg-gradient-to-br from-white to-emerald-50 rounded-lg shadow-lg border border-emerald-100">
+            <DialogHeader>
+              <DialogTitle>Producir</DialogTitle>
+              <DialogDescription>Crear producción a partir de la fórmula asociada a la línea.</DialogDescription>
+            </DialogHeader>
+            <div className="p-2 space-y-3">
+              <div>
+                <div className="text-sm text-muted-foreground">Producto / Fórmula</div>
+                <div className="text-lg font-semibold">{prodLine?.producto_nombre ?? prodLine?.nombre ?? prodLine?.formula_nombre ?? `#${prodLine?.formula_id ?? prodLine?.id ?? ''}`}</div>
+              </div>
+              <div>
+                <label className="text-sm">Cantidad a producir</label>
+                <input
+                  type="number"
+                  readOnly
+                  aria-readonly="true"
+                  value={prodCantidad.toFixed(2)}
+                  className="w-full mt-1 border rounded px-2 py-1 bg-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                />
+                
+              </div>
+              {/* Componentes editables (según fórmula). Se cargan en prodComponents al abrir el modal */}
+              {Array.isArray(prodComponents) && prodComponents.length > 0 ? (
+                <div>
+                  
+                  <ul className="list-none text-sm mt-2 space-y-2">
+                    {prodComponents.map((c: any, idx: number) => {
+                      const cid = Number(c?.materia_prima_id ?? c?.id ?? 0) || 0;
+                      const fallbackName = c?.nombre ?? c?.materia_prima_nombre ?? c?.materia_nombre ?? null;
+                      const resolvedName = (cid && materiasCostMap && materiasCostMap[cid] && (materiasCostMap[cid].nombre || materiasCostMap[cid].nombre)) ? (materiasCostMap[cid].nombre) : (fallbackName ?? null);
+                      const displayName = resolvedName ?? `ID ${cid || idx}`;
+                      return (
+                      <li key={String(cid || idx)} className="flex items-center justify-between gap-2">
+                        <div className="flex-1 break-words text-sm">{displayName}</div>
+                        <div className="w-40 flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={0.01}
+                            step={0.01}
+                            className="w-24 text-right border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                            value={(Number(c.cantidad_editable ?? 0)).toFixed(2)}
+                            onChange={(e) => {
+                              const raw = String(e.target.value).replace(',', '.');
+                              const parsed = Number(raw);
+                              const val = Number.isFinite(parsed) ? Math.max(0.01, Math.round(parsed * 100) / 100) : 0.01;
+                              setProdComponents((prev) => {
+                                const copy = prev.slice();
+                                copy[idx] = { ...copy[idx], cantidad_editable: val };
+                                return copy;
+                              });
+                            }}
+                          />
+                          <div className="text-xs text-muted-foreground">{c.unidad || ''}</div>
+                        </div>
+                      </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+              <div>
+                <label className="text-sm">Almacén destino (venta)</label>
+                {prodAlmacenes.length === 0 ? (
+                  <div className="text-sm text-red-600">No hay almacenes de venta disponibles.</div>
+                ) : (
+                  <div className="text-sm mt-1">{(prodAlmacenes.find((a) => Number(a.id) === Number(prodSelectedAlmacen))?.nombre) ?? '—'}</div>
+                )}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setProdModalOpen(false)} className="hover:bg-emerald-50">Cancelar</Button>
+              <Button disabled={prodSubmitting} onClick={handleProduceFromLine} className="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white">{prodSubmitting ? 'Generando...' : 'Producir'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

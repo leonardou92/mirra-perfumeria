@@ -10,10 +10,33 @@ export function useAuth() {
 
   const isAuthenticated = !!token;
 
+  // Extract userId from JWT token
+  function getUserId(): number | null {
+    if (!token) return null;
+    try {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const idClaim = payload?.id ?? payload?.sub ?? payload?.usuario_id ?? payload?.user_id ?? null;
+        if (idClaim !== undefined && idClaim !== null) {
+          const n = Number(idClaim);
+          if (Number.isFinite(n)) return n;
+        }
+      }
+    } catch (e) {
+      return null;
+    }
+    return null;
+  }
+
   function logout() {
     localStorage.removeItem("jwt_token");
+    localStorage.removeItem("user_permissions");
     setToken(null);
   }
 
-  return { token, isAuthenticated, logout };
+  const userId = getUserId();
+
+  return { token, isAuthenticated, logout, userId };
 }
+

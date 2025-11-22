@@ -2,7 +2,27 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch } from '../integrations/api';
+import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch, getOrdenProduccionDetailed } from '../integrations/api';
+// helpers
+const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+function extractMonedaFromDetalles(detalles: any) {
+  if (!detalles) return null;
+  try {
+    if (typeof detalles === 'string') {
+      try { const parsed = JSON.parse(detalles); if (parsed?.moneda) return parsed.moneda; if (parsed?.simbolo) return parsed.simbolo; if (parsed?.symbol) return parsed.symbol; } catch (e) { /* not json */ }
+      // fallback: use raw string if looks like a currency code
+      return detalles;
+    }
+    if (typeof detalles === 'object') {
+      return detalles?.moneda ?? detalles?.simbolo ?? detalles?.symbol ?? null;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+
+}
+
 
 type Forma = { id: number; nombre: string; detalles?: any };
 type Banco = { id: number; nombre: string; formas_pago?: Forma[] };
@@ -14,6 +34,19 @@ type Props = {
 };
 
 export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
+  // Guard para evitar crear el mismo pago varias veces desde el cliente
+  const inFlightCreates = React.useRef<Set<string>>(new Set());
+  const makeClientUid = () => {
+    try {
+      // @ts-ignore
+      if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof (globalThis.crypto as any).randomUUID === 'function') return (globalThis.crypto as any).randomUUID();
+      // eslint-disable-next-line no-undef
+      if (typeof crypto !== 'undefined' && typeof (crypto as any).randomUUID === 'function') return (crypto as any).randomUUID();
+    } catch (e) {
+      // fallback
+    }
+    return `cu_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+  };
   const [mounted, setMounted] = useState(false);
   const [bancos, setBancos] = useState<Banco[]>([]);
   const [globalFormas, setGlobalFormas] = useState<Forma[]>([]);
@@ -142,6 +175,44 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     }
     loadPedido();
   }, [pedidoId]);
+
+  // Helper: comprobar si el pedido tiene líneas pendientes por producir
+  async function pedidoHasPendingProduction(id: number) {
+    try {
+      const p = await getPedidoVenta(id);
+      const prods = Array.isArray(p?.productos) ? p.productos : (Array.isArray(p?.lineas) ? p.lineas : []);
+      for (const it of (prods || [])) {
+        const created = (it?.produccion_creada === true) || Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
+        const fid = Number(it?.formula_id ?? it?.formulaId ?? it?.formula?.id ?? 0) || 0;
+        const hasComps = Array.isArray(it?.componentes) && it.componentes.length > 0;
+        const orderId = Number(it?.orden_id ?? it?.orden_produccion_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId ?? 0) || 0;
+        // Si hay fórmula sin orden creada -> pendiente
+        if (fid && fid > 0 && !created && !orderId) return true;
+        // Si no hay componentes visibles (se mostraría botón Producir) y no hay orden/producción creada -> pendiente
+        if (!hasComps && !created && !orderId) return true;
+        // Si hay una orden referenciada, comprobar que esté completada
+        if (orderId && orderId > 0) {
+          try {
+            const od = await getOrdenProduccionDetailed(orderId);
+            const ordObj = od?.orden ?? od ?? {};
+            const estadoRaw = String(ordObj?.estado ?? ordObj?.status ?? ordObj?.estado_nombre ?? '').toLowerCase();
+            const completedFlag = Boolean(ordObj?.completada === true || ordObj?.finalizada === true || ordObj?.cerrada === true || ordObj?.completed === true || ordObj?.finished === true);
+            if (completedFlag) continue;
+            if (estadoRaw && (estadoRaw.includes('complet') || estadoRaw.includes('finaliz') || estadoRaw.includes('cerrad') || estadoRaw.includes('done') || estadoRaw.includes('finished'))) {
+              continue;
+            }
+            // si no está completada, considerarla pendiente
+            return true;
+          } catch (e) {
+            return true;
+          }
+        }
+      }
+    } catch (e) {
+      console.debug('pedidoHasPendingProduction error', e);
+    }
+    return false;
+  }
 
   useEffect(() => {
     // Cuando cambia banco seleccionado, actualizar formas disponibles
@@ -375,11 +446,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     setErrors(null);
     const m = Number(String(monto).replace(',', '.'));
     if (!selectedFormaId) {
-      setErrors('Selecciona una forma de pago');
+      setErrors('Seleccione una forma de pago válida.');
       return false;
     }
     if (!Number.isFinite(m) || m <= 0) {
-      setErrors('Monto inválido');
+      setErrors('El monto debe ser un número mayor que 0.');
       return false;
     }
     // si la forma es Transferencia y no hay banco seleccionado -> error
@@ -387,7 +458,7 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     const formaNombre = (forma?.nombre || '').toLowerCase();
     if (formaNombre.includes('transfer') || formaNombre.includes('transferencia')) {
       if (!selectedBancoId) {
-        setErrors('Selecciona un banco para Transferencia');
+        setErrors('Seleccione un banco para esta forma de pago.');
         return false;
       }
     }
@@ -407,11 +478,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     setErrors(null);
     const m = Number(String(monto).replace(',', '.'));
     if (!selectedFormaId) {
-      setErrors('Selecciona una forma de pago');
+      setErrors('Seleccione una forma de pago válida.');
       return false;
     }
     if (!Number.isFinite(m) || m <= 0) {
-      setErrors('Monto inválido');
+      setErrors('El monto debe ser un número mayor que 0.');
       return false;
     }
     const forma = availableFormas.find((f) => f.id === selectedFormaId);
@@ -423,15 +494,63 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         return false;
       }
     }
+    // Si la forma exige banco, verificar que haya banco seleccionado
+    if (nombre.includes('transfer') || nombre.includes('transferencia') || nombre.includes('pago movil') || nombre.includes('pago móvil') || nombre.includes('zelle') || nombre.includes('spei')) {
+      if (!selectedBancoId) {
+        setErrors('Seleccione un banco para esta forma de pago.');
+        return false;
+      }
+    }
     return true;
+  }
+
+  async function checkTasaForBanco(bancoId?: number | null) {
+    try {
+      if (!bancoId) return true; // no banco -> backend puede fallback
+      const banco = bancos.find((b) => b.id === bancoId) as any | undefined;
+      const moneda = banco?.moneda ?? banco?.currency ?? null;
+      if (!moneda) {
+        // permitir, backend hará fallback; avisar al usuario
+        return window.confirm('El banco seleccionado no tiene moneda configurada. Continuar sin comprobar tasa?');
+      }
+      // Intentar obtener tasa por símbolo
+      const t = await getTasaBySimbolo(String(moneda));
+      if (t && Number.isFinite(Number(t.monto)) && Number(t.monto) > 0) return true;
+      // Buscar difuso en listado
+      try {
+        const all = await getTasasCambio();
+        const list = Array.isArray(all) ? all : (all?.data || []);
+        const clean = (s: any) => String(s || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+        const target = clean(moneda);
+        for (const it of list) {
+          const s = clean(it.simbolo ?? it.simbol ?? it.symbol ?? '');
+          if (!s) continue;
+          if (s === target || s.includes(target) || target.includes(s)) {
+            if (Number.isFinite(Number(it.monto)) && Number(it.monto) > 0) return true;
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+      // No hay tasa válida
+      return window.confirm(`No hay tasa activa para la moneda ${moneda}. ¿Desea continuar igual?`);
+    } catch (e) {
+      return window.confirm('No se pudo comprobar la tasa del banco. ¿Desea continuar?');
+    }
   }
 
   async function handleAddPayment() {
     if (!validateForAdd()) return;
+    // comprobar tasa del banco si aplica
+    if (selectedBancoId) {
+      const ok = await checkTasaForBanco(selectedBancoId);
+      if (!ok) return;
+    }
     // construir pago parcial y añadir a la lista
     const pago: any = {
       forma_pago_id: selectedFormaId,
       monto: Number(String(monto).replace(',', '.')),
+      client_uid: makeClientUid(),
     };
     if (selectedBancoId) pago.banco_id = selectedBancoId;
     if (referencia) pago.referencia = referencia;
@@ -452,16 +571,59 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     }
 
     // calcular equivalencia usando la tasa actual (monto / tasa.monto)
+    // calcular equivalencia usando la tasa actual (monto / tasa.monto)
     try {
-      const t = tasa && typeof tasa.monto === 'number' ? Number(tasa.monto) : (tasa && tasa.monto ? Number(String(tasa.monto).replace(',', '.')) : NaN);
+      // Priorizar moneda definida en la forma (detalles), luego resolvedMoneda (UI), luego banco
+      const formaSel = availableFormas.find((f) => Number(f.id) === Number(selectedFormaId));
+      let monedaDetected = extractMonedaFromDetalles(formaSel?.detalles) || null;
+      if (!monedaDetected && resolvedMoneda) {
+        monedaDetected = resolvedMoneda;
+      }
+      if (!monedaDetected && selectedBancoId) {
+        const bancoObj = bancos.find((b) => b.id === selectedBancoId) as any | undefined;
+        monedaDetected = bancoObj?.moneda ?? bancoObj?.currency ?? null;
+      }
+      const monedaClean = normalizeSymbol(monedaDetected);
+      // intentar obtener tasa por símbolo detectado
+      let tasaObj: any = null;
+      if (monedaClean) {
+        try { tasaObj = await getTasaBySimbolo(monedaClean); } catch (e) { tasaObj = null; }
+      }
+      // Preferir la tasa seleccionada en el UI (`tasa`) cuando esté disponible, sino usar la tasa detectada por símbolo
+      const t = (tasa && Number.isFinite(Number(tasa.monto))) ? Number(tasa.monto) : (tasaObj && Number.isFinite(Number(tasaObj.monto)) ? Number(tasaObj.monto) : (tasa && tasa.monto ? Number(String(tasa.monto).replace(',', '.')) : NaN));
       const m = Number(String(pago.monto || '').replace(',', '.'));
       if (Number.isFinite(m) && Number.isFinite(t) && t !== 0) {
         pago.equivalencia = Number((m / t).toFixed(2));
       } else {
         pago.equivalencia = null;
       }
-    } catch (err) {
-      pago.equivalencia = null;
+      // adjuntar tasa y simbolo detectados
+      pago.tasa = tasaObj?.monto ? Number(tasaObj.monto) : (tasa && tasa.monto ? Number(tasa.monto) : pago.tasa ?? null);
+      pago.tasa_simbolo = normalizeSymbol(tasaObj?.simbolo ?? tasa?.simbolo ?? monedaClean ?? null);
+      if (pago.tasa !== null && pago.tasa !== undefined) pago.tasa_monto = pago.tasa;
+      pago.moneda = monedaClean;
+    // Adjuntar información de tasa usada para este pago (importante: enviar al backend)
+    try {
+      const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+      pago.tasa = tasa && (typeof tasa.monto === 'number' ? Number(tasa.monto) : (tasa?.monto ? Number(String(tasa.monto).replace(',', '.')) : null));
+      pago.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? null);
+      // compatibilidad con campos alternativos que el backend pueda leer
+      if (pago.tasa !== null && pago.tasa !== undefined) pago.tasa_monto = pago.tasa;
+    } catch (e) {
+      // ignore
+    }
+  } catch (e) {
+    // ignore outer computation errors
+  }
+    try {
+      // Añadir la moneda detectada para este pago (si aún no está definida).
+      // No sobrescribir una moneda ya determinada arriba (priorizamos detalles/resolvedMoneda).
+      if (!pago.moneda) {
+        const bancoObj = bancos.find((b) => b.id === selectedBancoId) as any | undefined;
+        pago.moneda = bancoObj?.moneda ? String(bancoObj.moneda).toUpperCase().replace(/[^A-Z0-9]/g, '') : (resolvedMoneda ? String(resolvedMoneda).toUpperCase().replace(/[^A-Z0-9]/g, '') : null);
+      }
+    } catch (e) {
+      // ignore
     }
 
   // persistir nombre de forma y banco para evitar confusiones si el usuario cambia selección luego
@@ -546,29 +708,168 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     setErrors(null);
     try {
         if (payments && payments.length > 0) {
+        let createdCount = 0;
+        const createdPayments: any[] = [];
         for (const p of payments) {
           if (p?.existing || p?.id) continue;
-          const body = { ...p, pedido_venta_id: pedidoId };
+          // asegurar client_uid en el body para idempotencia server-side
+          const body = { ...p, pedido_venta_id: pedidoId, client_uid: p.client_uid ?? makeClientUid() };
+          // Asegurar que el body incluye la tasa y símbolo correctos para este pago
           try {
-            // Debug: log payload sent for pago
-            // eslint-disable-next-line no-console
-            console.debug('create-pago-payload', body);
-            await createPago(body);
-          } catch (err: any) {
-            // intentar fallback a { pago: body } si el backend espera payload envuelto
-            // eslint-disable-next-line no-console
-            console.debug('create-pago-failed, intentando fallback', { err });
-            try {
-              await apiFetch('/pagos', { method: 'POST', body: JSON.stringify({ pago: body }) });
-              // eslint-disable-next-line no-console
-              console.debug('create-pago-fallback-success');
-            } catch (err2) {
-              // rethrow el error original para que el flujo principal lo capture
-              throw err;
+            if (body.tasa === undefined || body.tasa === null) {
+              body.tasa = p.tasa ?? (tasa && typeof tasa.monto === 'number' ? Number(tasa.monto) : (tasa?.monto ? Number(String(tasa.monto).replace(',', '.')) : null));
+            }
+            if (!body.tasa_simbolo) {
+              body.tasa_simbolo = p.tasa_simbolo ?? tasa?.simbolo ?? resolvedMoneda ?? null;
+            }
+            if (body.tasa !== undefined && body.tasa !== null && body.tasa_monto === undefined) body.tasa_monto = body.tasa;
+          } catch (e) {
+            // ignore
+          }
+          // comprobar tasa para el banco del pago antes de crear
+          if (body.banco_id) {
+            const ok = await checkTasaForBanco(body.banco_id);
+            if (!ok) {
+              setLoading(false);
+              return;
             }
           }
+            try {
+            // Debug: log payload sent for pago (incluye client_uid)
+            // eslint-disable-next-line no-console
+            console.debug('create-pago-payload', body);
+            // Final body normalization: asegurarnos que tasa_simbolo sea un código limpio
+            const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+            // Prefer symbol explicitly declared in the forma de pago details -> then banco -> then UI tasa
+            try {
+              let symbolFromFormaOrBanco: string | null = null;
+              try {
+                const formaForBody = availableFormas.find((f) => Number(f.id) === Number(body.forma_pago_id));
+                symbolFromFormaOrBanco = extractMonedaFromDetalles(formaForBody?.detalles) || null;
+              } catch (e) {
+                /* ignore */
+              }
+              if (!symbolFromFormaOrBanco) {
+                try {
+                  const bancoForBody = bancos.find((b) => b.id === body.banco_id) as any | undefined;
+                  symbolFromFormaOrBanco = bancoForBody?.moneda ?? bancoForBody?.currency ?? null;
+                } catch (e) { /* ignore */ }
+              }
+              if (symbolFromFormaOrBanco) {
+                const symClean = normalizeSymbol(symbolFromFormaOrBanco);
+                const tasaObjForSym = await getTasaBySimbolo(symClean as string);
+                if (tasaObjForSym && Number.isFinite(Number(tasaObjForSym.monto))) {
+                  const n = Number(tasaObjForSym.monto);
+                  body.tasa = n;
+                  body.tasa_monto = n;
+                  body.tasa_simbolo = normalizeSymbol(tasaObjForSym.simbolo ?? symClean ?? null);
+                } else {
+                  // fallback to UI tasa if available
+                  if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                    const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                    body.tasa = tasaVal;
+                    body.tasa_monto = tasaVal;
+                    body.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? body.tasa_simbolo ?? null);
+                  } else {
+                    body.tasa_simbolo = normalizeSymbol(body.tasa_simbolo ?? body.tasa?.simbolo ?? body.tasa ?? null);
+                  }
+                }
+              } else {
+                // No symbol from forma/banco: prefer UI tasa if present
+                if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                  const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                  body.tasa = tasaVal;
+                  body.tasa_monto = tasaVal;
+                  body.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? body.tasa_simbolo ?? null);
+                } else {
+                  body.tasa_simbolo = normalizeSymbol(body.tasa_simbolo ?? body.tasa?.simbolo ?? body.tasa ?? null);
+                }
+              }
+            } catch (e) {
+              // ignore normalization errors and keep existing values
+              body.tasa_simbolo = normalizeSymbol(body.tasa_simbolo ?? body.tasa?.simbolo ?? body.tasa ?? null);
+            }
+            // Añadir moneda explícita si falta
+            try {
+              const bancoForBody = bancos.find((b) => b.id === body.banco_id) as any | undefined;
+              body.moneda = body.moneda ?? (bancoForBody?.moneda ? String(bancoForBody.moneda).toUpperCase().replace(/[^A-Z0-9]/g, '') : (body.tasa_simbolo ?? null));
+            } catch (e) { /* ignore */ }
+            // Forzar que el body use los IDs seleccionados en UI para evitar enviar valores erróneos
+            try {
+              body.forma_pago_id = Number(body.forma_pago_id) || Number(p.forma_pago_id) || Number(selectedFormaId) || body.forma_pago_id;
+              body.banco_id = body.banco_id ?? p.banco_id ?? selectedBancoId ?? body.banco_id;
+            } catch (e) { /* ignore */ }
+            // Mostrar body final que se enviará
+            // eslint-disable-next-line no-console
+            console.debug('create-pago-final-body', body);
+            // Evitar crear pagos idénticos si ya hay uno en vuelo
+            const key = JSON.stringify(body);
+            if (inFlightCreates.current.has(key)) {
+              // Ya hay una petición idéntica en curso; saltar
+              console.debug('create-pago-skip-duplicate-inflight', { body });
+              continue;
+            }
+            inFlightCreates.current.add(key);
+            // Preferir endpoint específico por pedido: POST /pedidos-venta/:id/pagos
+            try {
+              const resp = await apiFetch(`/pedidos-venta/${pedidoId}/pagos`, { method: 'POST', body: JSON.stringify(body) });
+              createdCount++;
+              createdPayments.push(resp);
+              // eslint-disable-next-line no-console
+              console.debug('create-pago-pedidos-success', resp);
+            } catch (errInner) {
+              // Si falla, intentar /pagos directo
+              // eslint-disable-next-line no-console
+              console.debug('create-pago-pedidos-failed, intentando /pagos directo', { errInner });
+              try {
+                const resp2 = await apiFetch('/pagos', { method: 'POST', body: JSON.stringify(body) });
+                createdCount++;
+                createdPayments.push(resp2);
+                // eslint-disable-next-line no-console
+                console.debug('create-pago-pagos-direct-success', resp2);
+              } catch (err2) {
+                // intentar fallback envuelto { pago: body }
+                // eslint-disable-next-line no-console
+                console.debug('create-pago-pagos-direct-failed, intentando fallback envuelto', { err2 });
+                try {
+                  const resp3 = await apiFetch('/pagos', { method: 'POST', body: JSON.stringify({ pago: body }) });
+                  createdCount++;
+                  createdPayments.push(resp3);
+                  // eslint-disable-next-line no-console
+                  console.debug('create-pago-fallback-success', resp3);
+                } catch (err3) {
+                  // No pudimos enviar con ninguno de los tres formatos: propagar el error original
+                  throw err3;
+                }
+              }
+            }
+          } catch (err: any) {
+            throw err;
+          }
+        }
+        // Verificar que no hay líneas pendientes por producir antes de completar
+        if (await pedidoHasPendingProduction(pedidoId)) {
+          toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+          setLoading(false);
+          return;
         }
         const data = await completarPedidoVenta(pedidoId);
+        // Verificar que el pedido ahora incluye los pagos recién creados
+        try {
+          const fresh = await getPedidoVenta(pedidoId);
+          const pagosList = Array.isArray(fresh?.pagos) ? fresh.pagos : (Array.isArray(fresh?.pagos_venta) ? fresh.pagos_venta : (Array.isArray(fresh?.payments) ? fresh.payments : []));
+          if (createdCount > 0 && (!pagosList || pagosList.length === 0)) {
+            // No hay pagos detectados tras completar; notificar al usuario sin log ruidoso
+            setErrors('Pedido completado pero no se detectaron pagos asociados. Revisa la respuesta del servidor.');
+            toast.error('Pedido completado pero no se detectaron pagos asociados');
+            if (onSuccess) onSuccess(fresh);
+            if (onClose) onClose();
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('No se pudo verificar pagos tras completar', e);
+        }
         if (onSuccess) onSuccess(data);
         toast.success('Pagos registrados y pedido completado correctamente');
         if (onClose) onClose();
@@ -596,7 +897,87 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
           payload.pago.fecha_transaccion = new Date().toISOString();
         }
 
+        // asegurarnos de incluir client_uid y tasa en el pago enviado
+        try {
+          payload.pago.client_uid = payload.pago.client_uid ?? makeClientUid();
+          // Prefer symbol declared in the forma de pago details, then banco, then UI `tasa`.
+          try {
+            const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+            let symbolFromFormaOrBanco: string | null = null;
+            try {
+              const formaSel = availableFormas.find((f) => Number(f.id) === Number(selectedFormaId));
+              symbolFromFormaOrBanco = extractMonedaFromDetalles(formaSel?.detalles) || null;
+            } catch (e) {}
+            if (!symbolFromFormaOrBanco && selectedBancoId) {
+              try {
+                const bancoForPayload = bancos.find((b) => b.id === selectedBancoId) as any | undefined;
+                symbolFromFormaOrBanco = bancoForPayload?.moneda ?? bancoForPayload?.currency ?? null;
+              } catch (e) {}
+            }
+            if (symbolFromFormaOrBanco) {
+              const symClean = normalizeSymbol(symbolFromFormaOrBanco);
+              const tasaObjForSym = await getTasaBySimbolo(symClean as string);
+              if (tasaObjForSym && Number.isFinite(Number(tasaObjForSym.monto))) {
+                const n = Number(tasaObjForSym.monto);
+                payload.pago.tasa = n;
+                payload.pago.tasa_monto = n;
+                payload.pago.tasa_simbolo = normalizeSymbol(tasaObjForSym.simbolo ?? symClean ?? null);
+              } else {
+                // fallback to UI tasa
+                if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                  const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                  payload.pago.tasa = tasaVal;
+                  payload.pago.tasa_monto = tasaVal;
+                  payload.pago.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? payload.pago.tasa_simbolo ?? null);
+                }
+              }
+            } else {
+              if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                payload.pago.tasa = tasaVal;
+                payload.pago.tasa_monto = tasaVal;
+                payload.pago.tasa_simbolo = normalizeSymbol(tasa?.simbolo ?? resolvedMoneda ?? payload.pago.tasa_simbolo ?? null);
+              }
+            }
+          } catch (e) {
+            // noop
+          }
+          // añadir moneda explícita basada en banco si no está presente
+          try {
+            const bancoForPayload = bancos.find((b) => b.id === payload.pago.banco_id) as any | undefined;
+            payload.pago.moneda = payload.pago.moneda ?? (bancoForPayload?.moneda ? String(bancoForPayload.moneda).toUpperCase().replace(/[^A-Z0-9]/g, '') : payload.pago.tasa_simbolo ?? null);
+          } catch (e) { /* ignore */ }
+        } catch (e) { /* ignore */ }
+        // Asegurar que usamos la forma/banco seleccionados para el pago único
+        try {
+          payload.pago.forma_pago_id = Number(payload.pago.forma_pago_id) || Number(selectedFormaId) || payload.pago.forma_pago_id;
+          payload.pago.banco_id = payload.pago.banco_id ?? selectedBancoId ?? payload.pago.banco_id;
+        } catch (e) { /* ignore */ }
+        // debug final del pago que se enviará en el completar
+        // eslint-disable-next-line no-console
+        console.debug('create-pago-final-single', payload.pago);
+
+        if (await pedidoHasPendingProduction(pedidoId)) {
+          toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+          setLoading(false);
+          return;
+        }
         const data = await completarPedidoVenta(pedidoId, payload.pago);
+        // Verificar que el pago quedó asociado
+        try {
+          const fresh = await getPedidoVenta(pedidoId);
+          const pagosList = Array.isArray(fresh?.pagos) ? fresh.pagos : (Array.isArray(fresh?.pagos_venta) ? fresh.pagos_venta : (Array.isArray(fresh?.payments) ? fresh.payments : []));
+          if (!pagosList || pagosList.length === 0) {
+            setErrors('Pago registrado pero no se detectó asociación al pedido. Revisa la respuesta del servidor.');
+            toast.error('Pago registrado pero no se detectó asociación al pedido');
+            if (onSuccess) onSuccess(fresh);
+            if (onClose) onClose();
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('No se pudo verificar pago tras completar', e);
+        }
         if (onSuccess) onSuccess(data);
         toast.success('Pago registrado y pedido completado correctamente');
         if (onClose) onClose();
@@ -616,12 +997,30 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
 
   // Acción rápida: crear 1 pago y completar pedido en un solo click
   async function handleAddAndComplete() {
-    // Si el restante ya está cubierto, completar directamente sin requerir forma de pago
+    // Si ya hay pagos parciales en memoria, delegar a handleSubmit()
+    // handleSubmit se encarga de crear los pagos en el servidor y luego completar el pedido.
+    try {
+      if (payments && payments.length > 0) {
+        await handleSubmit();
+        return;
+      }
+    } catch (err) {
+      console.error('Error al crear pagos previos antes de completar', err);
+      setErrors('Error creando pagos previos');
+      return;
+    }
+
+    // Si no hay pagos parciales en memoria y el restante ya está cubierto, completar directamente
     try {
       if (pedidoTotal !== null && remaining !== null && remaining <= 0.009) {
         setLoading(true);
         setErrors(null);
         try {
+          if (await pedidoHasPendingProduction(pedidoId)) {
+            toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+            setLoading(false);
+            return;
+          }
           const data = await completarPedidoVenta(pedidoId);
           if (onSuccess) onSuccess(data);
           setShowSuccess(true);
@@ -688,29 +1087,96 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         pago.fecha_transaccion = new Date().toISOString();
       }
 
-      try {
-        // Debug: log payload
-        // eslint-disable-next-line no-console
-        console.debug('create-pago-payload', { ...pago, pedido_venta_id: pedidoId });
-        await createPago({ ...pago, pedido_venta_id: pedidoId });
-      } catch (err: any) {
-        // intentar fallback envuelto
-        // eslint-disable-next-line no-console
-        console.debug('create-pago-failed, intentando fallback', { err });
+          try {
+            // comprobar tasa del banco antes de enviar
+            if (pago.banco_id) {
+              const ok = await checkTasaForBanco(pago.banco_id);
+              if (!ok) { setLoading(false); return; }
+            }
+          // Asegurar que el pago que vamos a enviar contiene client_uid y la tasa correcta
+          try {
+            pago.client_uid = pago.client_uid ?? makeClientUid();
+            // Prefer symbol declared in the forma de pago details, then banco, then UI `tasa`.
+            try {
+              const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+              let symbolFromFormaOrBanco: string | null = null;
+              try {
+                const formaSel = availableFormas.find((f) => Number(f.id) === Number(pago.forma_pago_id));
+                symbolFromFormaOrBanco = extractMonedaFromDetalles(formaSel?.detalles) || null;
+              } catch (e) {}
+              if (!symbolFromFormaOrBanco && pago.banco_id) {
+                try {
+                  const bancoForP = bancos.find((b) => b.id === pago.banco_id) as any | undefined;
+                  symbolFromFormaOrBanco = bancoForP?.moneda ?? bancoForP?.currency ?? null;
+                } catch (e) {}
+              }
+              if (symbolFromFormaOrBanco) {
+                const symClean = normalizeSymbol(symbolFromFormaOrBanco);
+                const tasaObjForSym = await getTasaBySimbolo(symClean as string);
+                if (tasaObjForSym && Number.isFinite(Number(tasaObjForSym.monto))) {
+                  const n = Number(tasaObjForSym.monto);
+                  pago.tasa = n;
+                  pago.tasa_monto = n;
+                  pago.tasa_simbolo = normalizeSymbol(tasaObjForSym.simbolo ?? symClean ?? null);
+                } else {
+                  if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                    const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                    pago.tasa = pago.tasa ?? tasaVal;
+                    pago.tasa_monto = pago.tasa ?? tasaVal;
+                    pago.tasa_simbolo = normalizeSymbol(pago.tasa_simbolo ?? tasa?.simbolo ?? resolvedMoneda ?? null);
+                  }
+                }
+              } else {
+                if (tasa && (typeof tasa.monto === 'number' || (tasa?.monto && !Number.isNaN(Number(String(tasa.monto).replace(',', '.')))))) {
+                  const tasaVal = typeof tasa.monto === 'number' ? Number(tasa.monto) : Number(String(tasa.monto).replace(',', '.'));
+                  pago.tasa = pago.tasa ?? tasaVal;
+                  pago.tasa_monto = pago.tasa ?? tasaVal;
+                  pago.tasa_simbolo = normalizeSymbol(pago.tasa_simbolo ?? tasa?.simbolo ?? resolvedMoneda ?? null);
+                }
+              }
+            } catch (e) { /* ignore */ }
+          } catch (e) { /* ignore */ }
+        // Forzar uso de la forma/banco seleccionados antes de enviar en add-and-complete
         try {
-          await apiFetch('/pagos', { method: 'POST', body: JSON.stringify({ pago: { ...pago, pedido_venta_id: pedidoId } }) });
-          // eslint-disable-next-line no-console
-          console.debug('create-pago-fallback-success');
-        } catch (err2) {
-          throw err;
+          pago.forma_pago_id = Number(pago.forma_pago_id) || Number(selectedFormaId) || pago.forma_pago_id;
+          pago.banco_id = pago.banco_id ?? selectedBancoId ?? pago.banco_id;
+        } catch (e) { /* ignore */ }
+        // debug final del pago que se enviará en add-and-complete
+        // eslint-disable-next-line no-console
+        console.debug('create-pago-final-add-and-complete', pago);
+
+        // Enviar en un solo paso: crear y completar el pedido (backend debe soportar crear+finalizar)
+        // Esto evita duplicados al crear el pago por separado y luego completar.
+        if (await pedidoHasPendingProduction(pedidoId)) {
+          toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+          setLoading(false);
+          return;
         }
+        const data = await completarPedidoVenta(pedidoId, pago);
+        // Verificar asociación del pago
+        try {
+          const fresh = await getPedidoVenta(pedidoId);
+          const pagosList = Array.isArray(fresh?.pagos) ? fresh.pagos : (Array.isArray(fresh?.pagos_venta) ? fresh.pagos_venta : (Array.isArray(fresh?.payments) ? fresh.payments : []));
+          if (!pagosList || pagosList.length === 0) {
+            setErrors('Pago registrado pero no se detectó asociación al pedido. Revisa la respuesta del servidor.');
+            toast.error('Pago registrado pero no se detectó asociación al pedido');
+            if (onSuccess) onSuccess(fresh);
+            if (onClose) onClose();
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('No se pudo verificar pago tras completar (addAndComplete)', e);
+        }
+        if (onSuccess) onSuccess(data);
+        setShowSuccess(true);
+        setTimeout(() => setShowSuccess(false), 1600);
+        toast.success('Pago registrado y pedido completado');
+        if (onClose) onClose();
+        return;
+      } catch (e: any) {
+        throw e;
       }
-      const data = await completarPedidoVenta(pedidoId);
-      if (onSuccess) onSuccess(data);
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 1600);
-      toast.success('Pago registrado y pedido completado');
-      if (onClose) onClose();
     } catch (e: any) {
       console.error('Error en AddAndComplete', e);
       setErrors(e?.message ?? 'Error registrando pago');
@@ -877,7 +1343,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
           </div>
           <div className="text-sm text-gray-600">Registra uno o varios pagos para este pedido y complétalo. Los pagos se conservarán en el historial del pedido.</div>
         </div>
-
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => { if (onClose) onClose(); }} title="Volver al pedido">
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
       </div>
 
       {/* Mobile: botón para mostrar/ocultar el resumen lateral y ahorrar espacio */}
@@ -1099,28 +1569,21 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
               <Button onClick={handleAddAndComplete} disabled={loading} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white">
                 {loading ? 'Procesando...' : 'Pagar y completar'}
               </Button>
-            ) : (
-              <Button
-                onClick={handleSubmit}
-                disabled={loading || (payments.length > 0 && pedidoTotal !== null && Math.abs(paymentsEquivalenciaSum - (pedidoTotal ?? 0)) > 0.01)}
-                className="flex-1"
-              >
-                {loading ? 'Procesando...' : 'Registrar pagos y completar'}
-              </Button>
-            )}
+            ) : null}
           </div>
         </div>
+
+        {showSuccess && (
+          <div className="pointer-events-none fixed inset-0 flex items-center justify-center z-50">
+            <div className="bg-white/90 p-6 rounded-full shadow-lg flex items-center justify-center animate-pulse">
+              <svg className="w-16 h-16 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+          </div>
+        )}
+
       </div>
-      {/* Success overlay animation */}
-      {showSuccess && (
-        <div className="pointer-events-none fixed inset-0 flex items-center justify-center z-50">
-          <div className="bg-white/90 p-6 rounded-full shadow-lg flex items-center justify-center animate-pulse">
-            <svg className="w-16 h-16 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

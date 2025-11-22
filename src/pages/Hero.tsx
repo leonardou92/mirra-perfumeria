@@ -2,15 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Header from '@/components/Header';
 import ProductCard from '@/components/ProductCard';
-import CategoryFilter from '@/components/CategoryFilter';
-import { getCatalogoPaginated } from '@/integrations/api';
+import { getCatalogoPaginated, getCachedTasaActiva, createPedidoVentaPublic } from '@/integrations/api';
 import useCart from '@/hooks/use-cart';
 import { Product } from '@/lib/types';
 import { getImageUrl } from '@/lib/utils';
 import { toast } from 'sonner';
 import { Loader2, X, Search, User, Phone, FileText } from 'lucide-react';
 import Footer from '@/components/Footer';
-import { createPedidoVentaPublic, getCachedTasaActiva } from '@/integrations/api';
 import ProductCarousel from '@/components/SocialMediaCarousel';
 import { useIsMobile } from '@/hooks/use-mobile';
 
@@ -35,50 +33,60 @@ export default function Hero() {
   const { items: cartItems, addItem, removeItem, updateQty, clear, count } = useCart();
   const [tasaPublic, setTasaPublic] = useState<any | null>(null);
 
-  // Load full catalog once on mount
+  // Load public catalog using server-side pagination and search
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    getCatalogoPaginated(1, 1000)
-      .then((res: any) => {
-        const items = Array.isArray(res) ? res : res?.data ?? [];
-
-        const normalize = (item: any): Product => ({
+    (async () => {
+      try {
+        const res = await getCatalogoPaginated({ q: search || undefined, limit: perPage, offset: (page - 1) * perPage });
+        // getCatalogoPaginated normaliza a { items, meta }
+        const items = Array.isArray(res) ? res : (res?.items ?? res?.data ?? []);
+        const meta = res?.meta ?? null;
+        let productsList: Product[] = (Array.isArray(items) ? items : []).map((item: any) => ({
           id: item.id ?? item.producto_id ?? 0,
-          name: item.name ?? item.nombre ?? '',
-          image_url: item.image_url ?? item.imagen ?? item.image ?? '/placeholder-product.jpg',
-          featured: Boolean(item.featured ?? item.destacado ?? (item.is_featured === 1)),
-          brand: item.brand ?? item.marca ?? '',
-          category: item.category ?? item.categoria ?? item.tipo ?? '',
-          description: item.description ?? item.descripcion ?? '',
-          price: Number(item.price ?? item.precio_venta ?? item.precio ?? 0) || 0,
-          stock: item.stock ?? item.cantidad ?? item.stock_actual ?? 0,
-        });
+          name: item.nombre ?? item.name ?? '',
+          image_url: item.image_url ?? item.imagen ?? item.image ?? undefined,
+          featured: Boolean(item.destacado ?? item.featured ?? false),
+          brand: (item.marca && (item.marca.nombre ?? item.marca.name)) ?? item.marca_nombre ?? item.marca ?? item.brand ?? '',
+          category: (item.categoria && (item.categoria.nombre ?? item.categoria.name)) ?? item.categoria_nombre ?? item.categoria ?? item.category ?? '',
+          description: item.descripcion ?? item.description ?? '',
+          price: Number(item.precio_venta ?? item.price ?? 0) || 0,
+          precio_venta: item.precio_venta ?? null,
+          // Attach formulas and tamanos array from catalog (variants). `formulas` is used by the new API
+          formulas: Array.isArray(item.formulas) ? item.formulas : (item.formulas || []),
+          // Prefer explicit `tamanos` when present, otherwise fall back to `formulas` or `sizes`.
+          tamanos: Array.isArray(item.tamanos) ? item.tamanos : (Array.isArray(item.formulas) ? item.formulas : (item.sizes || [])),
+          stock: Number(item.stock ?? item.stock_disponible ?? 0) || 0,
+          // attach raw inventory and full objects for detail views
+          inventario: item.inventario ?? item.inventario_detalle ?? item.inventory ?? undefined,
+          categoria_obj: item.categoria ?? null,
+          marca_obj: item.marca ?? null,
+        } as Product));
 
+        // Nota: anteriormente filtrábamos productos sin `tamanos` para ocultar variantes
+        // en el catálogo público. Eso causa que algunos productos no se muestren si
+        // el backend no incluye `tamanos` en la respuesta. Dejamos la lista tal cual
+        // para no ocultar productos inesperadamente.
+        // productsList = productsList.filter((p) => Array.isArray(p.tamanos) && p.tamanos.length > 0);
         if (!mounted) return;
-        const normalized = items.map(normalize);
-
-        // Excluir productos de "Materia Prima" del catálogo público
-        const isMateriaPrima = (cat?: string) => {
-          if (!cat) return false;
-          const s = String(cat).toLowerCase().replace(/\s+/g, '');
-          return s === 'materiaprima' || s === 'materia' || s === 'materia_prima' || s.includes('materia');
-        };
-
-        const filtered = normalized.filter((p) => !isMateriaPrima(p.category));
-        setFullProducts(filtered);
-      })
-      .catch((err) => {
-        console.error('Error cargando catálogo:', err);
-        toast.error('Error al cargar catálogo');
+        setFullProducts(productsList);
+        setProducts(productsList);
+        // set total from meta if available
+        if (meta && (meta.total !== undefined && meta.total !== null)) setTotal(Number(meta.total));
+        else setTotal(Array.isArray(items) ? items.length : null);
+      } catch (err) {
+        console.error('Error cargando catálogo público:', err);
+        toast.error('Error al cargar catálogo público');
         setFullProducts([]);
-      })
-      .finally(() => mounted && setLoading(false));
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
+        setProducts([]);
+        setTotal(0);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [page, perPage, search]);
 
   // Obtener tasa pública cacheada para mostrar precios convertidos en el carrito público
   useEffect(() => {
@@ -122,7 +130,7 @@ export default function Hero() {
     setTotal(totalCount);
   }, [fullProducts, page, perPage, selectedCategory, search]);
 
-  const categories = Array.from(new Set((fullProducts ?? []).map((p) => (p.category || '').trim()).filter(Boolean)));
+  // not exposing categories selector on the public Hero
 
   function handleAddToCart(product: Product) {
     addItem(product, 1);
@@ -201,9 +209,7 @@ export default function Hero() {
             </div>
           </div>
 
-          <div className="w-full md:w-auto">
-            <CategoryFilter categories={categories} selectedCategory={selectedCategory} onSelectCategory={(c) => { setSelectedCategory(c === 'all' ? 'all' : c); setPage(1); }} />
-          </div>
+          {/* Category filter removed from Landing (Hero) */}
         </div>
 
         {loading ? (
@@ -211,7 +217,7 @@ export default function Hero() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">
             {products.map((p) => (
-              <ProductCard key={p.id} product={p} onAddToCart={handleAddToCart} />
+              <ProductCard key={p.id} product={p} onAddToCart={handleAddToCart} openModalOnAdd={true} showStock={false} />
             ))}
           </div>
         )}
@@ -252,21 +258,23 @@ export default function Hero() {
             ) : (
               <div className="space-y-4">
                 {cartItems.map((it) => {
-                  const base = Number(it.product.price || 0);
+                  const base = Number(it.product.precio_snapshot ?? it.product.price ?? it.product.precio_venta ?? 0);
                   const useConv = tasaPublic && typeof tasaPublic.monto === 'number' && tasaPublic.monto > 0;
                   const priceDisplay = useConv ? `${tasaPublic.simbolo || 'USD'} ${Number(base * Number(tasaPublic.monto)).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${Number(base).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                  const displayTamano = (it.product as any)?.tamano_nombre ?? (it.product as any)?.tamano?.nombre ?? (it.product as any)?.tamano_nombre;
                   return (
-                    <div key={it.product.id} className="flex items-center justify-between">
+                    <div key={it.key} className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <img src={getImageUrl(it.product) || '/placeholder-product.jpg'} alt={it.product.name} className="w-14 h-14 object-cover rounded" />
+                        <img src={getImageUrl(it.product)} alt={it.product.name} className="w-14 h-14 object-cover rounded" onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; }} />
                         <div>
                           <div className="font-medium text-copper-800">{it.product.name}</div>
+                          {displayTamano ? <div className="text-xs text-copper-600">{displayTamano}</div> : null}
                           <div className="text-sm text-copper-600">{priceDisplay}</div>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <input type="number" min={1} value={it.qty} onChange={(e) => updateQty(it.product.id, Math.max(1, Number(e.target.value || 1)))} className="w-16 p-1 border rounded text-center" />
-                        <button className="text-sm text-red-600" onClick={() => removeItem(it.product.id)}>Eliminar</button>
+                        <input type="number" min={1} value={it.qty} onChange={(e) => updateQty(it.key, Math.max(1, Number(e.target.value || 1)))} className="w-16 p-1 border rounded text-center" />
+                        <button className="text-sm text-red-600" onClick={() => removeItem(it.key)}>Eliminar</button>
                       </div>
                     </div>
                   );
@@ -275,7 +283,10 @@ export default function Hero() {
                 <div className="flex justify-between items-center pt-4 border-t">
                   <div className="text-lg font-semibold text-copper-800">Total</div>
                   <div className="text-lg font-bold text-copper-800">{(() => {
-                    const subtotal = cartItems.reduce((s, it) => s + (Number(it.product.price || 0) * it.qty), 0);
+                    const subtotal = cartItems.reduce((s, it) => {
+                      const base = Number((it.product as any)?.precio_snapshot ?? (it.product as any)?.price ?? (it.product as any)?.precio_venta ?? 0);
+                      return s + (base * it.qty);
+                    }, 0);
                     if (tasaPublic && typeof tasaPublic.monto === 'number' && tasaPublic.monto > 0) {
                       return `${tasaPublic.simbolo || 'USD'} ${Number(subtotal * Number(tasaPublic.monto)).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                     }
@@ -294,22 +305,56 @@ export default function Hero() {
                     if (cartItems.length === 0) { toast('El carrito está vacío'); return; }
                     if (!nombreCliente.trim()) { toast.error('Ingrese nombre del cliente'); return; }
                     if (!telefonoCliente.trim()) { toast.error('Ingrese teléfono del cliente'); return; }
-                    // Construir lineas mínimas: solo producto_id y cantidad, el servidor calculará precios
-                    const lineas = cartItems.map((it) => ({ producto_id: it.product.id, cantidad: Number(it.qty || 0) }));
+                    // Construir lineas mínimas: producto_id, cantidad y tamano_id (si existe)
+                    const lineas = cartItems.map((it) => {
+                      const p: any = it.product as any;
+                      const cantidad = Number(it.qty || 0);
+                      const precioSnapshot = Number(p.precio_snapshot ?? p.price ?? p.precio_venta ?? 0) || 0;
+                      const base: any = { producto_id: it.product.id, cantidad };
+                      // Preferir tamano (presentación) si existe; si no, aceptar fórmula como referencia
+                      const tid = p?.tamano?.id ?? p?.tamano_id ?? p?.formula?.id ?? p?.formula_id ?? undefined;
+                      const tname = p?.tamano?.nombre ?? p?.tamano_nombre ?? p?.formula?.nombre ?? p?.formula_nombre ?? undefined;
+                      if (tid !== undefined && tid !== null) {
+                        // Enviar tanto tamano_id (legacy) como formula_id (nuevo) para compatibilidad
+                        base.tamano_id = Number(tid);
+                        base.formula_id = Number(tid);
+                      }
+                      if (tname !== undefined && tname !== null) {
+                        base.tamano_nombre = String(tname);
+                        base.formula_nombre = String(tname);
+                      }
+                      // incluir precio y costo por línea para que el backend reciba snapshot inmediato
+                      base.precio_venta = Number(precioSnapshot);
+                      base.subtotal = Number(precioSnapshot) * cantidad;
+                      base.costo = (p?.tamano && (p.tamano.costo_pedido ?? p.tamano.costo)) ?? (p?.formula && (p.formula.costo_pedido ?? p.formula.costo)) ?? p.costo ?? undefined;
+                      return base;
+                    });
 
                     // Construir payload minimalista pero también incluir `productos` snapshots y pedir
                     // que sean preservados por el cliente si el backend requiere campos adicionales.
                     const productosSnapshot = cartItems.map((it) => {
                       const p: any = it.product as any;
+                      const precioSnapshotRaw = p.precio_snapshot ?? p.price ?? p.precio_venta ?? undefined;
+                      const precioSnapshot = precioSnapshotRaw !== undefined && precioSnapshotRaw !== null ? Number(precioSnapshotRaw) : undefined;
+                      // Incluir referencia a fórmula (preferida) si existe; mantener tamano por compatibilidad
+                      const tid = p?.tamano?.id ?? p?.tamano_id ?? p?.formula?.id ?? p?.formula_id ?? undefined;
+                      const tname = p?.tamano?.nombre ?? p?.tamano_nombre ?? p?.formula?.nombre ?? p?.formula_nombre ?? undefined;
+                      const costoVal = (p?.tamano && (p.tamano.costo_pedido ?? p.tamano.costo)) ?? (p?.formula && (p.formula.costo_pedido ?? p.formula.costo)) ?? p.costo ?? undefined;
                       return {
                         id: undefined,
                         producto_id: it.product.id,
                         cantidad: Number(it.qty || 0),
                         producto_nombre: it.product.name,
-                        precio_venta: Number(p.price ?? p.precio_venta ?? 0),
-                        costo: p.costo ?? undefined,
+                        ...(precioSnapshot !== undefined ? { precio_venta: precioSnapshot } : {}),
+                        // costo: preferir costo del tamaño (costo_pedido o costo), luego costo del producto
+                        ...(costoVal !== undefined ? { costo: Number(costoVal) } : {}),
                         image_url: p.image_url ?? p.image ?? undefined,
-                        subtotal: Number(p.price ?? p.precio_venta ?? 0) * Number(it.qty || 0),
+                        ...(precioSnapshot !== undefined ? { subtotal: Number(precioSnapshot) * Number(it.qty || 0) } : {}),
+                        // enviar ambos conjuntos de campos para máxima compatibilidad
+                        formula_id: tid !== undefined ? Number(tid) : undefined,
+                        formula_nombre: tname !== undefined ? String(tname) : undefined,
+                        tamano_id: tid !== undefined ? Number(tid) : undefined,
+                        tamano_nombre: tname !== undefined ? String(tname) : undefined,
                       };
                     });
 
