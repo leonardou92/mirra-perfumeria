@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableRow, TableCell } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { apiFetch } from '@/integrations/api';
+import { useAuth } from '@/hooks/use-auth';
 
 // Página básica para CRUD de usuarios y gestión de permisos por módulo.
 export default function Usuarios() {
@@ -18,6 +19,28 @@ export default function Usuarios() {
   const [userModalOpen, setUserModalOpen] = useState(false);
   const [permisosModalOpen, setPermisosModalOpen] = useState(false);
   const [availableModules, setAvailableModules] = useState<Array<string | { key: string; label?: string }>>([]);
+
+  const { token } = useAuth();
+
+  // Determine if user is admin
+  let isAdmin = false;
+  try {
+    if (token) {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const role = payload?.rol ?? payload?.role ?? payload?.role_name ?? payload?.roles ?? null;
+        if (typeof role === 'string') {
+          isAdmin = role.toLowerCase() === 'admin';
+        } else if (Array.isArray(role)) {
+          isAdmin = role.map((r: any) => String(r).toLowerCase()).includes('admin');
+        }
+      }
+    }
+  } catch (e) {
+    isAdmin = false;
+  }
+
 
   useEffect(() => {
     loadUsers();
@@ -258,7 +281,7 @@ export default function Usuarios() {
                         <TableCell>{u.rol || u.role || '—'}</TableCell>
                         <TableCell>
                           <div className="flex gap-2">
-                            <Button size="sm" onClick={() => loadPermisosFor(u)}>Permisos</Button>
+                            {isAdmin && <Button size="sm" onClick={() => loadPermisosFor(u)}>Permisos</Button>}
                             <Button size="sm" variant="outline" onClick={() => openEditUser(u)}>Editar</Button>
                             <Button size="sm" variant="destructive" onClick={() => deleteUser(u)}>Eliminar</Button>
                           </div>
@@ -330,13 +353,13 @@ export default function Usuarios() {
               <DialogDescription>Asignar permisos por módulo al usuario.</DialogDescription>
             </DialogHeader>
             <div className="space-y-2 mt-2">
-              {(availableModules && availableModules.length > 0 ? availableModules : ['dashboard','tasas_cambio','bancos','marcas','categorias','almacenes','productos','formulas','pedidos']).map((m) => {
+              {(availableModules && availableModules.length > 0 ? availableModules : ['dashboard', 'tasas_cambio', 'bancos', 'marcas', 'categorias', 'almacenes', 'productos', 'formulas', 'pedidos', 'usuarios']).map((m) => {
                 const key = typeof m === 'string' ? m : (m as any).key;
                 const label = typeof m === 'string' ? (m as string).replace('_', ' ') : ((m as any).label || (m as any).key.replace('_', ' '));
                 return (
                   <div key={String(key)} className="flex items-center justify-between">
                     <div className="capitalize text-sm">{label}</div>
-                    <input type="checkbox" checked={!!permisos?.[key]} onChange={(e) => setPermisos((p:any)=>({...(p||{}),[key]: e.target.checked}))} />
+                    <input type="checkbox" checked={!!permisos?.[key]} onChange={(e) => setPermisos((p: any) => ({ ...(p || {}), [key]: e.target.checked }))} />
                   </div>
                 );
               })}
