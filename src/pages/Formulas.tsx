@@ -55,9 +55,17 @@ export default function Formulas() {
 
   // Nota: no cargamos tamaños por producto aquí; las presentaciones ahora se modelan como fórmulas.
 
+  const componentesEndRef = useRef<HTMLDivElement>(null);
+
+  function scrollToBottom() {
+    componentesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }
+
   function addComponente() {
     // Al agregar una fila nueva, inicializar sin unidad (se llenará al seleccionar materia prima)
     setComponentes((c) => [...c, { materia_prima_id: null, cantidad: null, unidad: '' }]);
+    // Usar setTimeout para asegurar que el estado se haya actualizado
+    setTimeout(scrollToBottom, 100);
   }
 
   // Recalcular costo y precio estimado cuando cambian componentes o catálogo de productos
@@ -512,37 +520,74 @@ export default function Formulas() {
         )}
 
         <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
-          <DialogContent className="max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>Nueva fórmula</DialogTitle>
-              <DialogDescription>Crea una plantilla que asocia un producto terminado con sus componentes.</DialogDescription>
+          <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader className="pb-2">
+              <DialogTitle className="text-xl font-semibold">
+                {editingId ? 'Editar fórmula' : 'Nueva fórmula'}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                {editingId ? 'Actualiza los detalles de la fórmula' : 'Crea una plantilla que asocia un producto terminado con sus componentes'}
+              </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4 p-2">
-              <div>
-                <label className="text-sm">Nombre de la fórmula</label>
-                <Input value={nombre} onChange={(e) => setNombre(e.target.value)} maxLength={200} placeholder="Ej: Perfume Floral N°5 - Fórmula A" />
-              </div>
-              <div>
-                <label className="text-sm">Producto terminado</label>
-                <select className="w-full rounded-md border px-2 py-2" value={productoTerminadoId ?? ''} onChange={(e) => setProductoTerminadoId(e.target.value ? Number(e.target.value) : null)}>
-                  <option value="">-- Seleccione producto terminado --</option>
-                  {terminados.length === 0 ? (
-                    <option value="" disabled>-- No hay productos con almacén disponibles --</option>
-                  ) : (
-                    terminados.map((p) => (
-                      <option key={p.id} value={p.id}>{p.nombre || p.id}</option>
-                    ))
-                  )}
-                </select>
+            <div className="space-y-6 py-4 px-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium leading-none">
+                    Nombre de la fórmula <span className="text-red-500">*</span>
+                  </label>
+                  <Input 
+                    value={nombre} 
+                    onChange={(e) => setNombre(e.target.value)} 
+                    maxLength={200} 
+                    placeholder="Ej: Perfume Floral N°5 - Fórmula A" 
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium leading-none">
+                    Producto terminado <span className="text-red-500">*</span>
+                  </label>
+                  <select 
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2" 
+                    value={productoTerminadoId ?? ''} 
+                    onChange={(e) => setProductoTerminadoId(e.target.value ? Number(e.target.value) : null)}
+                  >
+                    <option value="">-- Seleccione producto terminado --</option>
+                    {terminados.length === 0 ? (
+                      <option value="" disabled>-- No hay productos disponibles --</option>
+                    ) : (
+                      terminados.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nombre || `Producto #${p.id}`} {p.codigo ? `(${p.codigo})` : ''}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
               </div>
 
               {/* Se eliminó la selección de tamaño: las presentaciones ahora están modeladas como fórmulas. */}
 
-              <div>
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium">Componentes</label>
-                  <Button size="sm" variant="outline" onClick={addComponente}>Agregar fila</Button>
+              <div className="border rounded-lg p-4 bg-muted/20">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="text-sm font-medium">Componentes</h4>
+                    <p className="text-xs text-muted-foreground">Agrega las materias primas necesarias</p>
+                  </div>
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    onClick={addComponente}
+                    className="gap-1 hover:bg-primary/10"
+                    type="button"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                    </svg>
+                    Agregar componente
+                  </Button>
                 </div>
 
                 <div className="space-y-2 mt-2">
@@ -553,72 +598,154 @@ export default function Formulas() {
                     const compCost = unitCost * qty;
                     const compPrice = unitPrice * qty;
                     return (
-                      <div key={idx} className="grid grid-cols-12 gap-2 items-end">
-                        <div className="col-span-5">
-                          <label className="text-xs">Materia prima</label>
-                          <select className="w-full rounded-md border px-2 py-2" value={comp.materia_prima_id ?? ''} onChange={(e) => {
-                            const val = e.target.value ? Number(e.target.value) : null;
-                            const mat = materias.find((m) => Number(m.id) === Number(val));
-                            const unidadMat = mat?.unidad || mat?.unidad_medida || mat?.unidad_nombre || '';
-                            setComponentes((c) => c.map((it, i) => i === idx ? { ...it, materia_prima_id: val, unidad: unidadMat } : it));
-                          }}>
-                            <option value="">-- Seleccione materia prima --</option>
+                      <div key={idx} className="grid grid-cols-12 gap-3 items-end p-3 bg-gray-50 rounded-lg mb-2">
+                        <div className="col-span-12 md:col-span-6">
+                          <label className="text-xs font-medium text-gray-600 block mb-1">Materia prima</label>
+                          <select 
+                            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
+                            value={comp.materia_prima_id ?? ''} 
+                            onChange={(e) => {
+                              const val = e.target.value ? Number(e.target.value) : null;
+                              const mat = materias.find((m) => Number(m.id) === Number(val));
+                              const unidadMat = mat?.unidad || mat?.unidad_medida || mat?.unidad_nombre || '';
+                              setComponentes((c) => c.map((it, i) => i === idx ? { ...it, materia_prima_id: val, unidad: unidadMat } : it));
+                            }}
+                          >
+                            <option value="">-- Seleccionar --</option>
                             {materias.map((m) => (
-                              <option key={m.id} value={m.id}>{m.nombre || m.id}</option>
+                              <option key={m.id} value={m.id}>
+                                {m.nombre || m.id} {m.codigo ? `(${m.codigo})` : ''}
+                              </option>
                             ))}
                           </select>
                         </div>
 
-                        <div className="col-span-3">
-                          <label className="text-xs">Cantidad</label>
-                          <Input type="number" min={0} value={comp.cantidad ?? ''} onChange={(e) => {
-                            const val = e.target.value ? Number(e.target.value) : null;
-                            setComponentes((c) => c.map((it, i) => i === idx ? { ...it, cantidad: val } : it));
-                          }} />
+                        <div className="col-span-6 sm:col-span-2">
+                          <label className="text-xs font-medium text-gray-600 block mb-1">Cantidad</label>
+                          <div className="relative">
+                            <Input 
+                              type="number" 
+                              min={0} 
+                              step="0.01"
+                              value={comp.cantidad ?? ''} 
+                              onChange={(e) => {
+                                const val = e.target.value ? Number(e.target.value) : null;
+                                setComponentes((c) => c.map((it, i) => i === idx ? { ...it, cantidad: val } : it));
+                              }}
+                              className="w-full pl-3 pr-1 py-2"
+                            />
+                            {comp.unidad && (
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">
+                                {comp.unidad}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="col-span-3">
-                          <label className="text-xs">Unidad</label>
-                          <input readOnly value={comp.unidad ?? ''} className="w-full rounded-md border px-2 py-2 bg-gray-50" />
+                        <div className="col-span-4 sm:col-span-2">
+                          <label className="text-xs font-medium text-gray-600 block mb-1">Costo/u</label>
+                          <div className="text-sm p-2 bg-white rounded border border-gray-200">
+                            ${getUnitCost(comp.materia_prima_id ?? null).toFixed(2)}
+                          </div>
                         </div>
 
-                        <div className="col-span-1">
-                          <Button variant="ghost" onClick={() => removeComponente(idx)}>X</Button>
+                        <div className="col-span-6 sm:col-span-1 flex items-end justify-end">
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            className="text-red-500 hover:bg-red-50 h-9 w-9"
+                            onClick={() => removeComponente(idx)}
+                            title="Eliminar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </Button>
                         </div>
                       </div>
                     )
                   })}
+                  <div ref={componentesEndRef} />
                 </div>
               </div>
 
-              <div>
-                <label className="text-sm">Costo estimado</label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    value={String(costo ?? 0)}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      const cleaned = v === '' ? 0 : parseFloat(String(v).replace(/[,]/g, '.'));
-                      const n = Number.isFinite(cleaned) ? cleaned : 0;
-                      setCosto(n);
-                    }}
-                    placeholder="calcula automáticamente"
-                  />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Costo estimado</label>
+                  <div className="relative">
+                    <Input
+                      className="w-full pl-8"
+                      type="number"
+                      step="0.01"
+                      value={String(costo ?? 0)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const cleaned = v === '' ? 0 : parseFloat(String(v).replace(/[,]/g, '.'));
+                        const n = Number.isFinite(cleaned) ? cleaned : 0;
+                        setCosto(n);
+                      }}
+                      placeholder="0.00"
+                    />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Calculado: <span className="font-medium">${computedCosto.toFixed(2)}</span>
+                  </p>
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">Calculado automáticamente · Calculado: ${computedCosto.toFixed(2)}</div>
-              </div>
 
-              <div>
-                <label className="text-sm">Precio de venta (editable)</label>
-                <Input type="number" step="0.01" value={String(precioVenta ?? 0)} onChange={(e) => { const v = e.target.value; const n = v === '' ? 0 : Number(v); setPrecioVenta(Number.isFinite(n) ? n : 0); }} placeholder="Ingrese precio de venta" />
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Precio de venta</label>
+                  <div className="relative">
+                    <Input 
+                      className="w-full pl-8"
+                      type="number" 
+                      step="0.01" 
+                      value={String(precioVenta ?? 0)} 
+                      onChange={(e) => { 
+                        const v = e.target.value; 
+                        const n = v === '' ? 0 : Number(v); 
+                        setPrecioVenta(Number.isFinite(n) ? n : 0); 
+                      }} 
+                      placeholder="0.00"
+                    />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Margen: <span className="font-medium">
+                      {costo > 0 ? `${((precioVenta / costo - 1) * 100).toFixed(1)}%` : '0%'}
+                    </span>
+                  </p>
+                </div>
               </div>
             </div>
 
-            <DialogFooter>
-              <Button variant="outline" onClick={() => { setIsOpen(false); resetForm(); }}>Cancelar</Button>
-              <Button disabled={submitting} onClick={handleCreate}>{submitting ? 'Creando...' : (editingId ? 'Guardar cambios' : 'Crear fórmula')}</Button>
+            <DialogFooter className="pt-4 border-t">
+              <Button 
+                variant="outline" 
+                onClick={() => { setIsOpen(false); resetForm(); }}
+                disabled={submitting}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={handleCreate}
+                disabled={submitting || !nombre || !productoTerminadoId}
+                className="gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    {editingId ? 'Guardando...' : 'Creando...'}
+                  </>
+                ) : editingId ? (
+                  'Guardar cambios'
+                ) : (
+                  'Crear fórmula'
+                )}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
