@@ -17,7 +17,7 @@ export default function AboutUs() {
     // window.location.href = '/';
   };
   return (
-    
+
     <div className="min-h-screen bg-gradient-to-b from-cream-50 to-cream-100 pt-24">
       <Header cartItemsCount={count} onCartClick={handleCartClick} />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -52,7 +52,7 @@ export default function AboutUs() {
               </div>
             </div>
 
-            <div className="bg-white p-6 rounded-lg shadow-lg">
+            {/* <div className="bg-white p-6 rounded-lg shadow-lg">
               <h2 className="text-2xl font-bold text-copper-800 mb-4 flex items-center">
                 <Calendar className="mr-2 text-copper-600" />
                 Próximos Eventos
@@ -63,15 +63,14 @@ export default function AboutUs() {
                   <p className="text-copper-700">15 de Noviembre, 2023</p>
                   <p className="text-copper-600 text-sm">¡Ven y celebra con nosotros la apertura de nuestra tienda con descuentos especiales!</p>
                 </div>
-                {/* Add more events as needed */}
               </div>
-            </div>
+            </div> */}
           </div>
 
           <div className="space-y-8">
             <div className="bg-white p-6 rounded-lg shadow-lg">
               <h2 className="text-2xl font-bold text-copper-800 mb-6">Contáctanos</h2>
-              
+
               <div className="space-y-6">
                 <div className="flex items-start">
                   <div className="flex-shrink-0 bg-copper-100 p-3 rounded-full">
@@ -79,9 +78,9 @@ export default function AboutUs() {
                   </div>
                   <div className="ml-4">
                     <h3 className="text-lg font-medium text-copper-800">Teléfono / WhatsApp</h3>
-                    <a 
-                      href="https://wa.me/04141454086" 
-                      target="_blank" 
+                    <a
+                      href="https://wa.me/04141454086"
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-copper-600 hover:text-copper-800 transition-colors"
                     >
@@ -97,9 +96,9 @@ export default function AboutUs() {
                   </div>
                   <div className="ml-4">
                     <h3 className="text-lg font-medium text-copper-800">Síguenos en Instagram</h3>
-                    <a 
-                      href="https://www.instagram.com/mirraperfumeria.ve/" 
-                      target="_blank" 
+                    <a
+                      href="https://www.instagram.com/mirraperfumeria.ve/"
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-copper-600 hover:text-copper-800 transition-colors"
                     >
@@ -117,9 +116,9 @@ export default function AboutUs() {
                   </div>
                   <div className="ml-4">
                     <h3 className="text-lg font-medium text-copper-800">Síguenos en TikTok</h3>
-                    <a 
-                      href="https://www.tiktok.com/@mirraperfumeria.ve" 
-                      target="_blank" 
+                    <a
+                      href="https://www.tiktok.com/@mirraperfumeria.ve"
+                      target="_blank"
                       rel="noopener noreferrer"
                       className="text-copper-600 hover:text-copper-800 transition-colors"
                     >
@@ -136,7 +135,7 @@ export default function AboutUs() {
                       <span className="text-copper-700">Lunes a Domingo:</span>
                       <span className="text-copper-800 font-medium">10:00 AM - 7:00 PM</span>
                     </li>
-                    
+
                   </ul>
                 </div>
               </div>
