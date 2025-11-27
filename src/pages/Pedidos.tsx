@@ -135,29 +135,29 @@ export default function Pedidos() {
       } catch (e) {
         // ignore
       }
-        polling = setInterval(async () => {
-            try {
-              const fresh = await getPedidos();
-              if (Array.isArray(fresh)) {
-                // Ordenar y usar actualización funcional para comparar con el estado previo
-                const sortedFresh = sortPedidosByDateDesc(fresh);
-                setPedidos((prev) => {
-                  try {
-                    if (sortedFresh.length > (prev?.length || 0)) {
-                      setNewOrdersCount((c) => c + (sortedFresh.length - (prev?.length || 0)));
-                      toast.success(`Hay ${sortedFresh.length - (prev?.length || 0)} pedidos nuevos`);
-                    }
-                  } catch (err) {
-                    console.debug(err);
-                  }
-                  return sortedFresh;
-                });
-                // refrescar pagosMap en background para mantener el listado sincronizado
-                try { await refreshPagosMap(); } catch (e) { console.debug(e); }
+      polling = setInterval(async () => {
+        try {
+          const fresh = await getPedidos();
+          if (Array.isArray(fresh)) {
+            // Ordenar y usar actualización funcional para comparar con el estado previo
+            const sortedFresh = sortPedidosByDateDesc(fresh);
+            setPedidos((prev) => {
+              try {
+                if (sortedFresh.length > (prev?.length || 0)) {
+                  setNewOrdersCount((c) => c + (sortedFresh.length - (prev?.length || 0)));
+                  toast.success(`Hay ${sortedFresh.length - (prev?.length || 0)} pedidos nuevos`);
+                }
+              } catch (err) {
+                console.debug(err);
               }
-            } catch (e) {
-              console.debug(e);
-            }
+              return sortedFresh;
+            });
+            // refrescar pagosMap en background para mantener el listado sincronizado
+            try { await refreshPagosMap(); } catch (e) { console.debug(e); }
+          }
+        } catch (e) {
+          console.debug(e);
+        }
       }, 15000);
     })();
 
@@ -207,7 +207,7 @@ export default function Pedidos() {
     const n = typeof t === 'number' ? t : (t ? Number(String(t).replace(',', '.')) : null);
     return Number.isFinite(n) && n > 0 ? n : null;
   };
-  
+
   function isPedidoPaid(p: any) {
     try {
       // Prefer explicit flag
@@ -726,7 +726,7 @@ export default function Pedidos() {
         // attach for UI
         (detalle as any).__computedPaid = computedPaid;
         // debug log
-         
+
         console.debug('detalle-pago-check', { id, base, tasaVal, sumEq, sumRaw, pagosCount: pagosList.length, computedPaid });
         setSelectedPedido(detalle);
         // Cargar órdenes de producción detalladas asociadas a este pedido
@@ -1031,18 +1031,18 @@ export default function Pedidos() {
                       <TableCell>
                         <div className="inline-flex items-center gap-2">
                           <Badge className="px-2 py-0.5" variant={estadoColor(fmtEstado(p)) as any}>{fmtEstado(p)}</Badge>
-                            {fmtEstado(p).toString().toLowerCase() === 'completado' && (
-                              isPedidoPaid(p) ? (
-                                <Badge className="ml-2 bg-green-600 text-white" variant="default">Pagado</Badge>
-                              ) : (
-                                <Badge className="ml-2" variant="destructive">Sin pago</Badge>
-                              )
-                            )}
+                          {fmtEstado(p).toString().toLowerCase() === 'completado' && (
+                            isPedidoPaid(p) ? (
+                              <Badge className="ml-2 bg-green-600 text-white" variant="default">Pagado</Badge>
+                            ) : (
+                              <Badge className="ml-2" variant="destructive">Sin pago</Badge>
+                            )
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>{fmtProductosCount(p)}</TableCell>
-                        <TableCell>{(fmtTasa(p) || 0).toFixed(2)}</TableCell>
-                        <TableCell>{fmtTotal(p)}</TableCell>
+                      <TableCell>{(fmtTasa(p) || 0).toFixed(2)}</TableCell>
+                      <TableCell>{fmtTotal(p)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
                           <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openDetalle(p.id); }}>
@@ -1058,19 +1058,23 @@ export default function Pedidos() {
           </CardContent>
         </Card>
 
-        
+
 
         {/* Detalle del pedido en modal */}
         <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-    <DialogContent className="w-full max-w-6xl sm:max-w-5xl bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow-lg border border-slate-100">
+          <DialogContent className="w-full max-w-6xl sm:max-w-5xl bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow-lg border border-slate-100">
             <DialogHeader>
               <DialogTitle>Detalle del pedido {selectedPedido?.id ?? ''}</DialogTitle>
               <DialogDescription>
-                    {selectedPedido ? (
-                      <div className="text-sm text-muted-foreground">
-                        Cliente: {selectedPedido.nombre_cliente || selectedPedido.cliente_nombre || 'Anónimo'} • Fecha:{' '}
-                        {selectedPedido.fecha ? format(new Date(selectedPedido.fecha), 'PPpp') : '-'} • Estado: {selectedPedido.estado || '-'} • Tasa: {(fmtTasa(selectedPedido) || 0).toFixed(4)}
-                      </div>
+                {selectedPedido ? (
+                  <div className="text-sm text-muted-foreground">
+                    Cliente: {selectedPedido.nombre_cliente || selectedPedido.cliente_nombre || 'Anónimo'} •
+                    Cédula: {selectedPedido.cedula || selectedPedido.cliente_cedula || '-'} •
+                    Teléfono: {selectedPedido.telefono || selectedPedido.cliente_telefono || '-'} •
+                    Fecha: {selectedPedido.fecha ? format(new Date(selectedPedido.fecha), 'PPpp') : '-'} •
+                    Estado: {selectedPedido.estado || '-'} •
+                    Tasa: {(fmtTasa(selectedPedido) || 0).toFixed(4)}
+                  </div>
                 ) : (
                   <div className="text-sm text-muted-foreground">Cargando...</div>
                 )}
@@ -1081,7 +1085,7 @@ export default function Pedidos() {
               {detailLoading ? (
                 <div>Cargando detalle...</div>
               ) : selectedPedido ? (
-                  <div className={`space-y-4 ${showPaymentInline ? 'hidden' : ''}`}>
+                <div className={`space-y-4 ${showPaymentInline ? 'hidden' : ''}`}>
                   <div className="flex justify-between items-center">
                     <div />
                     <div>
@@ -1110,7 +1114,7 @@ export default function Pedidos() {
                             </td>
                             <td className="py-2 align-top">
                               <div className="font-medium">{it.producto_nombre || it.nombre || '-'}</div>
-                                <div className="text-xs text-muted-foreground mt-1">
+                              <div className="text-xs text-muted-foreground mt-1">
                                 {(() => {
                                   // Mostrar componentes asociados a la línea (si vienen) y/o componentes de la orden de producción referenciada
                                   const compsFromLine = Array.isArray(it?.componentes) ? it.componentes.map((c: any) => {
@@ -1419,7 +1423,7 @@ export default function Pedidos() {
                                     }
                                   } catch (e) { console.debug(e); }
                                   // Log payload to console for debugging
-                                   
+
                                   console.debug('create-pago-payload', payload);
                                   // Evitar crear duplicados idénticos en vuelo
                                   const key = JSON.stringify(payload);
@@ -1447,7 +1451,7 @@ export default function Pedidos() {
                                       try { directInFlight.current.delete(key); } catch (e) { console.debug(e); }
                                     }
                                   }
-                                  } catch (err: any) { console.debug(err); }
+                                } catch (err: any) { console.debug(err); }
                                 toast.success('Pago registrado');
                                 // refrescar detalle y obtener pagos por pedido
                                 const fresh = await getPedidoVenta(selectedPedido.id);
@@ -1545,7 +1549,7 @@ export default function Pedidos() {
                       const prod = productosOptions.find((p: any) => Number(p.id) === Number(addProductId));
                       if (prod && (prod.nombre || prod.name || prod.producto_nombre)) line.nombre_producto = prod.nombre ?? prod.name ?? prod.producto_nombre;
                     } catch (e) { /* ignore */ }
-                    const payload = { productos: [ line ] };
+                    const payload = { productos: [line] };
                     try {
                       console.debug('ADD-PEDIDO request', { endpoint: `/pedidos-venta/${selectedPedido.id}/items`, payload });
                       await apiFetch(`/pedidos-venta/${selectedPedido.id}/items`, { method: 'POST', body: JSON.stringify(payload) });
@@ -1625,21 +1629,21 @@ export default function Pedidos() {
             <DialogFooter>
               <div className="w-full flex flex-col md:flex-row items-center justify-between gap-2">
                 <div className="flex gap-2">
-                    <Button size="lg" variant="default" onClick={() => {
-                        // abrir formulario de pago pero bloquear si hay líneas pendientes por producir
-                        if (hasPendingProductionLines(selectedPedido)) {
-                          toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
-                          return;
-                        }
-                        setShowPaymentInline(true);
-                      }} disabled={selectedPedido?.estado === 'Cancelado' || isPedidoPaid(selectedPedido) || hasPendingProductionLines(selectedPedido)} className="bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white">
-                        Registrar pago y completar
-                      </Button>
-                    {selectedPedido?.estado === 'Completado' && (
-                      <Button size="lg" variant="outline" onClick={() => setShowPaymentsView(true)}>
-                        Ver pagos
-                      </Button>
-                    )}
+                  <Button size="lg" variant="default" onClick={() => {
+                    // abrir formulario de pago pero bloquear si hay líneas pendientes por producir
+                    if (hasPendingProductionLines(selectedPedido)) {
+                      toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+                      return;
+                    }
+                    setShowPaymentInline(true);
+                  }} disabled={selectedPedido?.estado === 'Cancelado' || isPedidoPaid(selectedPedido) || hasPendingProductionLines(selectedPedido)} className="bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white">
+                    Registrar pago y completar
+                  </Button>
+                  {selectedPedido?.estado === 'Completado' && (
+                    <Button size="lg" variant="outline" onClick={() => setShowPaymentsView(true)}>
+                      Ver pagos
+                    </Button>
+                  )}
                   <Button size="lg" variant="destructive" onClick={completarSinPago} disabled={completing || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado' || hasPendingProductionLines(selectedPedido)}>
                     {completing ? 'Procesando...' : 'Completar sin registrar pago'}
                   </Button>
@@ -1692,12 +1696,12 @@ export default function Pedidos() {
                   value={prodCantidad.toFixed(2)}
                   className="w-full mt-1 border rounded px-2 py-1 bg-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-200"
                 />
-                
+
               </div>
               {/* Componentes editables (según fórmula). Se cargan en prodComponents al abrir el modal */}
               {Array.isArray(prodComponents) && prodComponents.length > 0 ? (
                 <div>
-                  
+
                   <ul className="list-none text-sm mt-2 space-y-2">
                     {prodComponents.map((c: any, idx: number) => {
                       const cid = Number(c?.materia_prima_id ?? c?.id ?? 0) || 0;
@@ -1705,29 +1709,29 @@ export default function Pedidos() {
                       const resolvedName = (cid && materiasCostMap && materiasCostMap[cid] && (materiasCostMap[cid].nombre || materiasCostMap[cid].nombre)) ? (materiasCostMap[cid].nombre) : (fallbackName ?? null);
                       const displayName = resolvedName ?? `ID ${cid || idx}`;
                       return (
-                      <li key={String(cid || idx)} className="flex items-center justify-between gap-2">
-                        <div className="flex-1 break-words text-sm">{displayName}</div>
-                        <div className="w-40 flex items-center gap-2">
-                          <input
-                            type="number"
-                            min={0.01}
-                            step={0.01}
-                            className="w-24 text-right border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                            value={(Number(c.cantidad_editable ?? 0)).toFixed(2)}
-                            onChange={(e) => {
-                              const raw = String(e.target.value).replace(',', '.');
-                              const parsed = Number(raw);
-                              const val = Number.isFinite(parsed) ? Math.max(0.01, Math.round(parsed * 100) / 100) : 0.01;
-                              setProdComponents((prev) => {
-                                const copy = prev.slice();
-                                copy[idx] = { ...copy[idx], cantidad_editable: val };
-                                return copy;
-                              });
-                            }}
-                          />
-                          <div className="text-xs text-muted-foreground">{c.unidad || ''}</div>
-                        </div>
-                      </li>
+                        <li key={String(cid || idx)} className="flex items-center justify-between gap-2">
+                          <div className="flex-1 break-words text-sm">{displayName}</div>
+                          <div className="w-40 flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={0.01}
+                              step={0.01}
+                              className="w-24 text-right border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                              value={(Number(c.cantidad_editable ?? 0)).toFixed(2)}
+                              onChange={(e) => {
+                                const raw = String(e.target.value).replace(',', '.');
+                                const parsed = Number(raw);
+                                const val = Number.isFinite(parsed) ? Math.max(0.01, Math.round(parsed * 100) / 100) : 0.01;
+                                setProdComponents((prev) => {
+                                  const copy = prev.slice();
+                                  copy[idx] = { ...copy[idx], cantidad_editable: val };
+                                  return copy;
+                                });
+                              }}
+                            />
+                            <div className="text-xs text-muted-foreground">{c.unidad || ''}</div>
+                          </div>
+                        </li>
                       );
                     })}
                   </ul>
