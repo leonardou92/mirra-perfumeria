@@ -7,7 +7,7 @@ export default function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div>
             <h3 className="text-xl font-bold mb-4">Mirra Perfumeria</h3>
-            <p className="text-cream-200">Tu destino para encontrar las mejores fragancias importadas de las marcas más exclusivas del mundo.</p>
+            <p className="text-cream-200">Tu destino para encontrar las mejores fragancias de las marcas más exclusivas del mundo.</p>
           </div>
           <div>
             <h4 className="font-semibold mb-4">Enlaces Rápidos</h4>
