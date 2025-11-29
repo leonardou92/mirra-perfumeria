@@ -36,27 +36,81 @@ export default function Formulas() {
   const [produceChecking, setProduceChecking] = useState<boolean>(false);
   const [produceAvailability, setProduceAvailability] = useState<Array<{ materia_prima_id: number; nombre?: string; disponible: number; requerido: number }>>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [debouncedQuery, setDebouncedQuery] = useState<string>('');
 
   // Pagination state
   const [page, setPage] = useState<number>(1);
   const [perPage] = useState<number>(12);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(0);
 
+  // Load productos y almacenes al montar
   useEffect(() => {
     setLoading(true);
-    // Load formulas, productos, and almacenes without enrichment (faster initial load)
-    Promise.all([getFormulas(), getProductos(), getAlmacenes()])
-      .then(([fres, pres, ares]) => {
-        // Set raw formulas without enrichment to speed up initial load
-        setFormulas(Array.isArray(fres) ? fres : []);
+    Promise.all([getProductos(), getAlmacenes()])
+      .then(([pres, ares]) => {
         setProductos(Array.isArray(pres) ? pres : []);
         setAlmacenes(Array.isArray(ares) ? ares : []);
       })
       .catch((e) => {
-        console.error('Error cargando fórmulas/productos', e);
-        toast.error('No se pudo cargar datos');
+        console.error('Error cargando productos/almacenes', e);
+        toast.error('No se pudo cargar productos o almacenes');
       })
       .finally(() => setLoading(false));
   }, []);
+
+  // Debounce searchTerm into debouncedQuery (400ms)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchTerm.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  // Load formulas for the current page (server-side pagination).
+  // If debouncedQuery is present, call search endpoint; otherwise call getFormulas.
+  useEffect(() => {
+    let mounted = true;
+    async function loadPage() {
+      setLoading(true);
+      try {
+        if (debouncedQuery) {
+          // call search endpoint
+          // dynamic import to avoid potential circular dependencies
+          // @ts-ignore
+          const { searchFormulas } = await import('@/integrations/api');
+          const fres: any = await searchFormulas(debouncedQuery, page);
+          const data = fres?.data ?? [];
+          const meta = fres?.meta;
+          if (meta) {
+            setTotal(Number(meta.total ?? 0));
+            setTotalPages(Number(meta.total_pages ?? Math.ceil((meta.total ?? 0) / (meta.per_page ?? 12))));
+          } else {
+            setTotal(Array.isArray(data) ? data.length : 0);
+            setTotalPages(1);
+          }
+          if (mounted) await enrichAndSetFormulas(data);
+        } else {
+          const fres: any = await getFormulas(page);
+          const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+          const meta = fres?.meta;
+          if (meta) {
+            setTotal(Number(meta.total ?? 0));
+            setTotalPages(Number(meta.total_pages ?? Math.ceil((meta.total ?? 0) / (meta.per_page ?? 12))));
+          } else {
+            setTotal(Array.isArray(data) ? data.length : 0);
+            setTotalPages(1);
+          }
+          if (mounted) await enrichAndSetFormulas(data);
+        }
+      } catch (e) {
+        console.error('Error cargando fórmulas paginadas/por búsqueda', e);
+        toast.error('No se pudo cargar fórmulas');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadPage();
+    return () => { mounted = false; };
+  }, [page, debouncedQuery]);
 
   // Nota: no cargamos tamaños por producto aquí; las presentaciones ahora se modelan como fórmulas.
 
@@ -182,9 +236,10 @@ export default function Formulas() {
         await createFormula(payload);
         toast.success('Fórmula creada');
       }
-      // refresh list
-      const fres = await getFormulas();
-      setFormulas(Array.isArray(fres) ? fres : []);
+      // refresh current page from server
+      const fres: any = await getFormulas(page);
+      const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+      await enrichAndSetFormulas(data);
       setIsOpen(false);
       // reset form (incluye costo/precio)
       resetForm();
@@ -245,8 +300,9 @@ export default function Formulas() {
     try {
       await deleteFormula(id);
       toast.success('Fórmula eliminada');
-      const fres = await getFormulas();
-      setFormulas(Array.isArray(fres) ? fres : []);
+      const fres: any = await getFormulas(page);
+      const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+      await enrichAndSetFormulas(data);
     } catch (err) {
       console.error('Error eliminando fórmula', err);
       const msg = parseApiError(err) || 'Error al eliminar fórmula';
@@ -323,9 +379,10 @@ export default function Formulas() {
       setProduceChecking(true);
       const resp = await createProduccion(Number(produceFormula.id), { cantidad: qty, almacen_venta_id: Number(produceAlmacenId) });
       toast.success('Producción ejecutada correctamente');
-      // refresh formulas list (por si la API actualiza algo)
-      const fres = await getFormulas();
-      enrichAndSetFormulas(Array.isArray(fres) ? fres : []);
+      // refresh current page (por si la API actualiza algo)
+      const fres: any = await getFormulas(page);
+      const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+      await enrichAndSetFormulas(data);
       setProduceOpen(false);
     } catch (err: any) {
       console.error('Error ejecutando producción', err);
@@ -336,22 +393,8 @@ export default function Formulas() {
     }
   }
 
-  // Filtrar fórmulas por término de búsqueda
-  const filteredFormulas = React.useMemo(() => {
-    if (!searchTerm.trim()) return formulas;
-    const term = searchTerm.toLowerCase();
-    return formulas.filter(f =>
-      (f.nombre || '').toLowerCase().includes(term) ||
-      (f.producto_terminado_nombre || '').toLowerCase().includes(term) ||
-      String(f.id).includes(term)
-    );
-  }, [formulas, searchTerm]);
-
-  // Calculate paginated formulas
-  const paginatedFormulas = React.useMemo(() => {
-    const start = (page - 1) * perPage;
-    return filteredFormulas.slice(start, start + perPage);
-  }, [filteredFormulas, page, perPage]);
+  // The `formulas` state already contains the server page (or search results page)
+  const paginatedFormulas = React.useMemo(() => formulas, [formulas]);
 
   // Reset page to 1 when search changes
   React.useEffect(() => {
@@ -579,11 +622,11 @@ export default function Formulas() {
               )}
             </div>
 
-            {/* Pagination controls */}
-            {filteredFormulas.length > perPage && (
+            {/* Pagination controls (server-side) */}
+            {total > perPage && (
               <div className="flex flex-col sm:flex-row items-center justify-between mt-8 gap-4 pt-6 border-t">
                 <div className="text-sm text-gray-600">
-                  Mostrando página {page} de {Math.ceil(filteredFormulas.length / perPage)} — {filteredFormulas.length} fórmulas
+                  Mostrando página {page} de {totalPages} — {total} fórmulas
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
@@ -597,8 +640,8 @@ export default function Formulas() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setPage(p => p + 1)}
-                    disabled={page >= Math.ceil(filteredFormulas.length / perPage)}
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
                   >
                     Siguiente
                   </Button>
