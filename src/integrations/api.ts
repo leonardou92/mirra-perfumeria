@@ -166,8 +166,51 @@ export async function adjustInventario(data: { producto_id: number; almacen_id: 
 }
 
 // Fórmulas
-export async function getFormulas() {
-  return apiFetch(`/formulas`);
+export async function getFormulas(page?: number) {
+  const qs = page ? `?page=${page}` : '';
+  const res: any = await apiFetch(`/formulas${qs}`);
+
+  // If caller requested a specific page, normalize to { data, meta }
+  if (page !== undefined && page !== null) {
+    // Try to extract data array
+    const data = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : (res?.items || res?.data || []));
+    const total = res?.total ?? res?.meta?.total ?? (Array.isArray(data) ? data.length : 0);
+    const per_page = res?.per_page ?? res?.meta?.per_page ?? 12;
+    const pageNum = res?.page ?? page;
+    const total_pages = res?.total_pages ?? res?.meta?.total_pages ?? (per_page ? Math.ceil(Number(total) / Number(per_page)) : 0);
+    return { data, meta: { total: Number(total ?? 0), page: Number(pageNum ?? page), per_page: Number(per_page), total_pages: Number(total_pages) } };
+  }
+
+  // Backwards-compatible behavior: if no page requested, return array when possible
+  if (res && typeof res === 'object') {
+    if (Array.isArray(res.data)) return res.data;
+    if (Array.isArray(res.items)) return res.items;
+  }
+  if (Array.isArray(res)) return res;
+  return res;
+}
+
+// Buscar fórmulas por texto (endpoint: GET /api/formulas/search?q=...&page=...)
+export async function searchFormulas(q: string, page: number = 1) {
+  if (!q || String(q).trim() === '') throw new Error('q requerido');
+  const qs = `?q=${encodeURIComponent(String(q))}&page=${encodeURIComponent(String(page))}`;
+  const res: any = await apiFetch(`/formulas/search${qs}`);
+
+  // Normalizar respuesta esperada: { data: [...], meta: { total, page, per_page, total_pages } }
+  try {
+    const data = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : (res?.items || []));
+    const meta = res?.meta ?? {
+      total: res?.total ?? (Array.isArray(data) ? data.length : 0),
+      page: res?.page ?? page,
+      per_page: res?.per_page ?? 12,
+      total_pages: res?.total_pages ?? Math.ceil((res?.total ?? (Array.isArray(data) ? data.length : 0)) / (res?.per_page ?? 12)),
+    };
+    return { data, meta };
+  } catch (e) {
+    // Fallback liberal
+    if (Array.isArray(res)) return { data: res, meta: { total: res.length, page, per_page: 12, total_pages: Math.ceil(res.length / 12) } };
+    return res;
+  }
 }
 
 export async function getFormula(id: number) {

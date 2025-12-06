@@ -37,9 +37,9 @@ export function AppSidebar() {
   const { open } = useSidebar();
   const navigate = useNavigate();
   const location = useLocation();
-  const { logout, token, userId } = useAuth();
-  const { clear: clearCart } = useCart();
-  const { hasPermission, loadUserPermissions, permissions } = usePermissions();
+    const { logout, token, userId } = useAuth();
+    const { clear: clearCart } = useCart();
+    const { hasPermission, loadUserPermissions } = usePermissions();
 
   // Determine role from JWT token (if available).
   let isAdmin = false;
@@ -61,14 +61,13 @@ export function AppSidebar() {
     isAdmin = false;
   }
 
-  // Load permissions when userId changes
-  useEffect(() => {
-    if (userId) {
-      loadUserPermissions(userId);
-    }
-  }, [userId]);
+  // Note: menu visibility is not driven by backend module flags here. We show the full menu
+  // and only hide the `Usuarios` link when the current user is not an admin.
 
-  // Note: menu visibility is driven by backend module flags from usuario_modulos table
+  // Load permissions when userId is available
+  useEffect(() => {
+    if (userId) loadUserPermissions(userId);
+  }, [userId]);
 
   const handleLogout = () => {
     // Ejecuta la limpieza local de sesión y redirige al login
@@ -110,11 +109,16 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {menuItems.map((item) => {
-                // Check permission from usuario_modulos for all items
-                if (item.module && !hasPermission(item.module)) {
-                  return null;
+                // If module key present, require permission
+                if (item.module) {
+                  // Usuarios should be visible to admins regardless of permiso flag
+                  if (item.module === 'usuarios') {
+                    if (isAdmin) return item;
+                    if (!hasPermission('usuarios')) return null;
+                    return item;
+                  }
+                  if (!hasPermission(item.module as any)) return null;
                 }
-
                 return item;
               }).filter(Boolean).map((item: any) => {
                 const isActive = location.pathname === item.url || location.pathname.startsWith(item.url + "/");

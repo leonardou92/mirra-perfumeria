@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { Layout } from "@/components/Layout";
 import { getFormulas, createFormula, getProductos, getFormula, updateFormula, deleteFormula, getAlmacenes, getProducto, createProduccion } from "@/integrations/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { parseApiError } from '@/lib/utils';
+import { Combobox } from "@/components/ui/combobox";
 
 export default function Formulas() {
   const [formulas, setFormulas] = useState<any[]>([]);
@@ -22,9 +23,9 @@ export default function Formulas() {
   const [componentes, setComponentes] = useState<Array<{ materia_prima_id: number | null; cantidad: number | null; unidad: string }>>([
     { materia_prima_id: null, cantidad: null, unidad: '' },
   ]);
-  const [costo, setCosto] = useState<number | null>(null);
-  const [precioVenta, setPrecioVenta] = useState<number | null>(null);
-  const [precioManual, setPrecioManual] = useState(false);
+  const [costo, setCosto] = useState<number>(0);
+  const [computedCosto, setComputedCosto] = useState<number>(0);
+  const [precioVenta, setPrecioVenta] = useState<number>(0);
   // Nota: ya no manejamos tamaños aquí; las presentaciones/tamaños ahora son fórmulas.
   const [submitting, setSubmitting] = useState(false);
   // Producción modal
@@ -34,29 +35,98 @@ export default function Formulas() {
   const [produceAlmacenId, setProduceAlmacenId] = useState<number | null>(null);
   const [produceChecking, setProduceChecking] = useState<boolean>(false);
   const [produceAvailability, setProduceAvailability] = useState<Array<{ materia_prima_id: number; nombre?: string; disponible: number; requerido: number }>>([]);
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [debouncedQuery, setDebouncedQuery] = useState<string>('');
 
+  // Pagination state
+  const [page, setPage] = useState<number>(1);
+  const [perPage] = useState<number>(12);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(0);
+
+  // Load productos y almacenes al montar
   useEffect(() => {
     setLoading(true);
-    // Cargar también almacenes para filtrar productos por existencia en almacenes de materia prima
-    Promise.all([getFormulas(), getProductos(), getAlmacenes()])
-      .then(([fres, pres, ares]) => {
-        // Enriquecer fórmulas para mostrar nombres en lugar de ids cuando sea necesario
-        enrichAndSetFormulas(Array.isArray(fres) ? fres : []);
+    Promise.all([getProductos(), getAlmacenes()])
+      .then(([pres, ares]) => {
         setProductos(Array.isArray(pres) ? pres : []);
         setAlmacenes(Array.isArray(ares) ? ares : []);
       })
       .catch((e) => {
-        console.error('Error cargando fórmulas/productos', e);
-        toast.error('No se pudo cargar datos');
+        console.error('Error cargando productos/almacenes', e);
+        toast.error('No se pudo cargar productos o almacenes');
       })
       .finally(() => setLoading(false));
   }, []);
 
+  // Debounce searchTerm into debouncedQuery (400ms)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchTerm.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  // Load formulas for the current page (server-side pagination).
+  // If debouncedQuery is present, call search endpoint; otherwise call getFormulas.
+  useEffect(() => {
+    let mounted = true;
+    async function loadPage() {
+      setLoading(true);
+      try {
+        if (debouncedQuery) {
+          // call search endpoint
+          // dynamic import to avoid potential circular dependencies
+          // @ts-ignore
+          const { searchFormulas } = await import('@/integrations/api');
+          const fres: any = await searchFormulas(debouncedQuery, page);
+          const data = fres?.data ?? [];
+          const meta = fres?.meta;
+          if (meta) {
+            setTotal(Number(meta.total ?? 0));
+            setTotalPages(Number(meta.total_pages ?? Math.ceil((meta.total ?? 0) / (meta.per_page ?? 12))));
+          } else {
+            setTotal(Array.isArray(data) ? data.length : 0);
+            setTotalPages(1);
+          }
+          if (mounted) await enrichAndSetFormulas(data);
+        } else {
+          const fres: any = await getFormulas(page);
+          const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+          const meta = fres?.meta;
+          if (meta) {
+            setTotal(Number(meta.total ?? 0));
+            setTotalPages(Number(meta.total_pages ?? Math.ceil((meta.total ?? 0) / (meta.per_page ?? 12))));
+          } else {
+            setTotal(Array.isArray(data) ? data.length : 0);
+            setTotalPages(1);
+          }
+          if (mounted) await enrichAndSetFormulas(data);
+        }
+      } catch (e) {
+        console.error('Error cargando fórmulas paginadas/por búsqueda', e);
+        toast.error('No se pudo cargar fórmulas');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadPage();
+    return () => { mounted = false; };
+  }, [page, debouncedQuery]);
+
   // Nota: no cargamos tamaños por producto aquí; las presentaciones ahora se modelan como fórmulas.
+
+  const componentesEndRef = useRef<HTMLDivElement>(null);
+  // Ref to prevent overwriting stored prices with calculated ones when loading a formula
+  const ignoreNextPriceUpdate = useRef(false);
+
+  function scrollToBottom() {
+    componentesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }
 
   function addComponente() {
     // Al agregar una fila nueva, inicializar sin unidad (se llenará al seleccionar materia prima)
     setComponentes((c) => [...c, { materia_prima_id: null, cantidad: null, unidad: '' }]);
+    // Usar setTimeout para asegurar que el estado se haya actualizado
+    setTimeout(scrollToBottom, 100);
   }
 
   // Recalcular costo y precio estimado cuando cambian componentes o catálogo de productos
@@ -69,22 +139,58 @@ export default function Formulas() {
           const qty = Number(c.cantidad || 0);
           if (!c.materia_prima_id || qty <= 0) continue;
           const mat = productos.find((p) => Number(p.id) === Number(c.materia_prima_id));
-          const unitCost = Number(mat?.costo ?? mat?.cost ?? 0) || 0;
+          const unitCost = Number(mat?.costo ?? mat?.cost ?? mat?.costo_promedio ?? 0) || 0;
           const unitPrice = Number(mat?.precio_venta ?? mat?.price ?? 0) || 0;
           totalCost += unitCost * qty;
           totalPriceFromComponents += unitPrice * qty;
         }
         // Si el precio a partir de componentes es 0, aplicamos un multiplicador por defecto (x2)
         const estimatedPrice = totalPriceFromComponents > 0 ? totalPriceFromComponents : (totalCost > 0 ? totalCost * 2 : 0);
-        setCosto(totalCost > 0 ? Number(totalCost) : null);
-        // sólo sobrescribimos precio si el usuario no lo modificó manualmente
-        if (!precioManual) setPrecioVenta(estimatedPrice > 0 ? Number(estimatedPrice) : null);
+        // actualizar computedCosto siempre para mostrar preview
+        setComputedCosto(totalCost);
+
+        // Si se indicó ignorar la actualización (ej. al cargar editar), saltar
+        if (ignoreNextPriceUpdate.current) {
+          ignoreNextPriceUpdate.current = false;
+          return;
+        }
+
+        // actualizar costo y precio automáticamente (siempre se recalculan al cambiar componentes/productos)
+        setCosto(totalCost > 0 ? Number(totalCost) : 0);
+        setPrecioVenta(estimatedPrice > 0 ? Number(estimatedPrice) : 0);
       } catch (e) {
         // noop
       }
     }
     recalc();
-  }, [componentes, productos, precioManual]);
+  }, [componentes, productos]);
+
+  // helper síncrono para calcular total de costo desde componentes (sin depender del effect)
+  function computeTotalCostFromComponents(compList = componentes) {
+    let tot = 0;
+    for (const c of compList) {
+      const qty = Number(c.cantidad || 0);
+      if (!c.materia_prima_id || qty <= 0) continue;
+      const mat = productos.find((p) => Number(p.id) === Number(c.materia_prima_id));
+      const unitCost = Number(mat?.costo ?? mat?.cost ?? mat?.costo_promedio ?? 0) || 0;
+      tot += unitCost * qty;
+    }
+    return tot;
+  }
+
+  // Helper para obtener costo unitario de una materia prima (usado en UI por fila)
+  function getUnitCost(materia_prima_id: number | null) {
+    if (!materia_prima_id) return 0;
+    const mat = productos.find((p) => Number(p.id) === Number(materia_prima_id));
+    return Number(mat?.costo ?? mat?.cost ?? mat?.costo_promedio ?? 0) || 0;
+  }
+
+  // Helper para obtener precio unitario de una materia prima (usado en UI por fila)
+  function getUnitPrice(materia_prima_id: number | null) {
+    if (!materia_prima_id) return 0;
+    const mat = productos.find((p) => Number(p.id) === Number(materia_prima_id));
+    return Number(mat?.precio_venta ?? mat?.price ?? 0) || 0;
+  }
 
   function removeComponente(idx: number) {
     setComponentes((c) => c.filter((_, i) => i !== idx));
@@ -95,9 +201,8 @@ export default function Formulas() {
     setProductoTerminadoId(null);
     setComponentes([{ materia_prima_id: null, cantidad: null, unidad: '' }]);
     setEditingId(null);
-    setCosto(null);
-    setPrecioVenta(null);
-    setPrecioManual(false);
+    setCosto(0);
+    setPrecioVenta(0);
   }
 
   async function handleCreate() {
@@ -131,9 +236,10 @@ export default function Formulas() {
         await createFormula(payload);
         toast.success('Fórmula creada');
       }
-      // refresh list
-      const fres = await getFormulas();
-      setFormulas(Array.isArray(fres) ? fres : []);
+      // refresh current page from server
+      const fres: any = await getFormulas(page);
+      const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+      await enrichAndSetFormulas(data);
       setIsOpen(false);
       // reset form (incluye costo/precio)
       resetForm();
@@ -170,14 +276,16 @@ export default function Formulas() {
       // prefill nombre
       setNombre(f.nombre ?? '');
       // prefill costo and precio if present; otherwise they'll be calculated by effect
-      setCosto(f.costo !== undefined && f.costo !== null ? Number(f.costo) : null);
-      setPrecioVenta(f.precio_venta !== undefined && f.precio_venta !== null ? Number(f.precio_venta) : null);
-      // if the API returned explicit precio_venta, consider it manual (don't overwrite on component changes)
-      setPrecioManual(f.precio_venta !== undefined && f.precio_venta !== null);
+      setCosto(f.costo !== undefined && f.costo !== null ? Number(f.costo) : 0);
+      setPrecioVenta(f.precio_venta !== undefined && f.precio_venta !== null ? Number(f.precio_venta) : 0);
       // Prefill form
       setProductoTerminadoId(f.producto_terminado_id ?? null);
-        setComponentes(Array.isArray(f.componentes) && f.componentes.length > 0 ? f.componentes.map((c: any) => ({ materia_prima_id: c.materia_prima_id, cantidad: c.cantidad, unidad: c.unidad })) : [{ materia_prima_id: null, cantidad: null, unidad: '' }]);
-        // ya no prefill de tamaño (legacy)
+
+      // Prevent effect from overwriting these values with calculated ones
+      ignoreNextPriceUpdate.current = true;
+
+      setComponentes(Array.isArray(f.componentes) && f.componentes.length > 0 ? f.componentes.map((c: any) => ({ materia_prima_id: c.materia_prima_id, cantidad: c.cantidad, unidad: c.unidad })) : [{ materia_prima_id: null, cantidad: null, unidad: '' }]);
+      // ya no prefill de tamaño (legacy)
       setEditingId(id);
       setIsOpen(true);
     } catch (err) {
@@ -192,8 +300,9 @@ export default function Formulas() {
     try {
       await deleteFormula(id);
       toast.success('Fórmula eliminada');
-      const fres = await getFormulas();
-      setFormulas(Array.isArray(fres) ? fres : []);
+      const fres: any = await getFormulas(page);
+      const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+      await enrichAndSetFormulas(data);
     } catch (err) {
       console.error('Error eliminando fórmula', err);
       const msg = parseApiError(err) || 'Error al eliminar fórmula';
@@ -270,9 +379,10 @@ export default function Formulas() {
       setProduceChecking(true);
       const resp = await createProduccion(Number(produceFormula.id), { cantidad: qty, almacen_venta_id: Number(produceAlmacenId) });
       toast.success('Producción ejecutada correctamente');
-      // refresh formulas list (por si la API actualiza algo)
-      const fres = await getFormulas();
-      enrichAndSetFormulas(Array.isArray(fres) ? fres : []);
+      // refresh current page (por si la API actualiza algo)
+      const fres: any = await getFormulas(page);
+      const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+      await enrichAndSetFormulas(data);
       setProduceOpen(false);
     } catch (err: any) {
       console.error('Error ejecutando producción', err);
@@ -282,6 +392,14 @@ export default function Formulas() {
       setProduceChecking(false);
     }
   }
+
+  // The `formulas` state already contains the server page (or search results page)
+  const paginatedFormulas = React.useMemo(() => formulas, [formulas]);
+
+  // Reset page to 1 when search changes
+  React.useEffect(() => {
+    setPage(1);
+  }, [searchTerm]);
 
   // Construir set de ids de almacenes marcados como materia prima
   const materiaAlmacenIds = new Set<number>((almacenes || []).filter((a: any) => a.es_materia_prima || String(a.tipo).toLowerCase() === 'interno').map((a: any) => a.id));
@@ -315,34 +433,65 @@ export default function Formulas() {
   // Mostrar solo productos terminados que tengan almacén también
   const terminados = productos.filter((p) => !isMateriaPrima(p) && hasAnyAlmacen(p));
 
-  // Enriquecer fórmulas con nombres de productos cuando la API sólo devuelve ids.
+  // Prepare options for Combobox
+  const terminadosOptions = React.useMemo(() => terminados.map(p => ({
+    value: String(p.id),
+    label: `${p.nombre || `Producto #${p.id}`} ${p.codigo ? `(${p.codigo})` : ''}`
+  })), [terminados]);
+
+  const materiasOptions = React.useMemo(() => materias.map(m => ({
+    value: String(m.id),
+    label: `${m.nombre || m.id} ${m.codigo ? `(${m.codigo})` : ''}`
+  })), [materias]);
+
+  // Optimized enrichment: try to get names from productos array first, only call API if needed
   async function enrichAndSetFormulas(rawFormulas: any[]) {
     try {
       const list = Array.isArray(rawFormulas) ? rawFormulas : [];
-      // recolectar ids únicos que necesitamos resolver
-      const ids = new Set<number>();
+
+      // First pass: try to fill names from productos array (already loaded)
+      const productosMap = new Map<number, string>();
+      for (const p of productos) {
+        if (p && p.id) {
+          productosMap.set(Number(p.id), p.nombre || p.name || p.titulo || `Producto #${p.id}`);
+        }
+      }
+
+      // Collect IDs that still need resolution (not found in productos array)
+      const idsToFetch = new Set<number>();
       for (const f of list) {
-        if (f && f.producto_terminado_id && !f.producto_terminado_nombre) ids.add(Number(f.producto_terminado_id));
+        if (f && f.producto_terminado_id && !f.producto_terminado_nombre && !productosMap.has(Number(f.producto_terminado_id))) {
+          idsToFetch.add(Number(f.producto_terminado_id));
+        }
         if (Array.isArray(f.componentes)) {
           for (const c of f.componentes) {
-            if (c && c.materia_prima_id && !c.materia_prima_nombre) ids.add(Number(c.materia_prima_id));
+            if (c && c.materia_prima_id && !c.materia_prima_nombre && !productosMap.has(Number(c.materia_prima_id))) {
+              idsToFetch.add(Number(c.materia_prima_id));
+            }
           }
         }
       }
 
-      const idArr = Array.from(ids);
+      const idArr = Array.from(idsToFetch);
       const resolvedMap: Record<number, string> = {};
+
+      // Only fetch products not in the productos array
       if (idArr.length > 0) {
         const promises = idArr.map((id) => getProducto(Number(id)).then((p: any) => ({ id: Number(id), name: p?.nombre || p?.name || p?.titulo || (`Producto #${id}`) })).catch(() => ({ id: Number(id), name: `Producto #${id}` })));
         const results = await Promise.all(promises);
         for (const r of results) resolvedMap[Number(r.id)] = r.name;
       }
 
+      // Merge productosMap and resolvedMap
+      const finalMap: Record<number, string> = {};
+      productosMap.forEach((name, id) => finalMap[id] = name);
+      Object.assign(finalMap, resolvedMap);
+
       const enriched = list.map((f: any) => {
         const nf = { ...f };
-        if (nf.producto_terminado_id) nf.producto_terminado_nombre = nf.producto_terminado_nombre ?? resolvedMap[Number(nf.producto_terminado_id)];
+        if (nf.producto_terminado_id) nf.producto_terminado_nombre = nf.producto_terminado_nombre ?? finalMap[Number(nf.producto_terminado_id)];
         if (Array.isArray(nf.componentes)) {
-          nf.componentes = nf.componentes.map((c: any) => ({ ...c, materia_prima_nombre: c.materia_prima_nombre ?? resolvedMap[Number(c.materia_prima_id)] }));
+          nf.componentes = nf.componentes.map((c: any) => ({ ...c, materia_prima_nombre: c.materia_prima_nombre ?? finalMap[Number(c.materia_prima_id)] }));
         }
         return nf;
       });
@@ -354,143 +503,368 @@ export default function Formulas() {
     }
   }
 
-  
+
 
   return (
     <Layout>
       <div className="p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold">Fórmulas</h1>
-          <div className="flex gap-2">
-            <Button onClick={() => { resetForm(); setIsOpen(true); }}>Nueva fórmula</Button>
+        <div className="space-y-4 mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <h1 className="text-2xl font-bold">Fórmulas</h1>
+            <div className="flex gap-2">
+              <Button onClick={() => { resetForm(); setIsOpen(true); }}>Nueva fórmula</Button>
+            </div>
+          </div>
+
+          <div className="relative max-w-md">
+            <input
+              type="text"
+              placeholder="Buscar por nombre de fórmula..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-4 py-2 pl-10 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-copper-500 focus:border-transparent"
+            />
+            <svg
+              className="absolute left-3 top-2.5 h-5 w-5 text-gray-400"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path
+                fillRule="evenodd"
+                d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
+                clipRule="evenodd"
+              />
+            </svg>
           </div>
         </div>
 
         {loading ? (
           <div>Cargando fórmulas...</div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {formulas.length === 0 && <div className="text-muted-foreground">No hay fórmulas definidas.</div>}
-            {formulas.map((f) => (
-              <Card key={f.id}>
-                <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
-                    <span>{f.nombre || f.titulo || `Fórmula #${f.id}`}</span>
-                    <div className="ml-4 flex gap-2">
-                      <Button size="sm" variant="secondary" onClick={() => openProduceModal(f.id)}>Producir</Button>
-                      <Button size="sm" variant="outline" onClick={() => handleEdit(f.id)}>Editar</Button>
-                      <Button size="sm" variant="destructive" onClick={() => handleDelete(f.id)}>Eliminar</Button>
-                    </div>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-sm text-muted-foreground mb-2">Producto terminado: {f.producto_terminado_nombre ?? f.producto_terminado_id}</div>
-                  <div className="flex gap-4 mb-2 text-sm">
-                    <div>Costo: <strong>{f.costo !== undefined && f.costo !== null ? Number(f.costo).toFixed(2) : '-'}</strong></div>
-                    <div>Precio: <strong>{f.precio_venta !== undefined && f.precio_venta !== null ? Number(f.precio_venta).toFixed(2) : '-'}</strong></div>
-                  </div>
-                  {Array.isArray(f.componentes) && f.componentes.length > 0 ? (
-                    <ul className="text-sm list-disc pl-4">
-                      {f.componentes.map((c: any) => (
-                        <li key={c.id || `${c.materia_prima_id}-${c.cantidad}`}>{c.nombre || c.materia_prima_nombre || c.materia_prima_id} — {c.cantidad} {c.unidad}</li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">Sin componentes definidos.</div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {paginatedFormulas.length === 0 ? (
+                <div className="col-span-full text-center py-8 text-muted-foreground">
+                  {searchTerm ? 'No se encontraron fórmulas que coincidan con la búsqueda.' : 'No hay fórmulas definidas.'}
+                </div>
+              ) : (
+                paginatedFormulas.map((f) => (
+                  <Card key={f.id} className="overflow-hidden">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-lg">
+                        {f.nombre || f.titulo || `Fórmula #${f.id}`}
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => openProduceModal(f.id)}
+                          className="flex-1 min-w-[80px]"
+                        >
+                          Producir
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleEdit(f.id)}
+                          className="flex-1 min-w-[70px]"
+                        >
+                          Editar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => handleDelete(f.id)}
+                          className="flex-1 min-w-[80px]"
+                        >
+                          Eliminar
+                        </Button>
+                      </div>
+                      <div className="text-xs text-muted-foreground mb-2">
+                        <div className="flex items-center gap-1 truncate" title={String(f.producto_terminado_nombre ?? f.producto_terminado_id)}>
+                          <span className="font-medium whitespace-nowrap">Producto:</span>
+                          <span className="truncate">{f.producto_terminado_nombre ?? f.producto_terminado_id}</span>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 mb-2 text-xs bg-gray-50 p-1.5 rounded">
+                        <div className="text-center">
+                          <div className="font-medium text-gray-500">Costo</div>
+                          <div className="font-semibold text-amber-700">
+                            {f.costo !== undefined && f.costo !== null ?
+                              `$${Number(f.costo).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <div className="font-medium text-gray-500">Precio</div>
+                          <div className="font-semibold text-green-700">
+                            {f.precio_venta !== undefined && f.precio_venta !== null ?
+                              `$${Number(f.precio_venta).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                          </div>
+                        </div>
+                      </div>
+                      {Array.isArray(f.componentes) && f.componentes.length > 0 ? (
+                        <ul className="text-xs space-y-1 pl-3">
+                          {f.componentes.map((c: any) => (
+                            <li key={c.id || `${c.materia_prima_id}-${c.cantidad}`}>
+                              {c.nombre || c.materia_prima_nombre || c.materia_prima_id} — {c.cantidad} {c.unidad}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">Sin componentes</div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </div>
+
+            {/* Pagination controls (server-side) */}
+            {total > perPage && (
+              <div className="flex flex-col sm:flex-row items-center justify-between mt-8 gap-4 pt-6 border-t">
+                <div className="text-sm text-gray-600">
+                  Mostrando página {page} de {totalPages} — {total} fórmulas
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         <Dialog open={isOpen} onOpenChange={(open) => { setIsOpen(open); if (!open) resetForm(); }}>
-          <DialogContent className="max-w-3xl">
-            <DialogHeader>
-              <DialogTitle>Nueva fórmula</DialogTitle>
-              <DialogDescription>Crea una plantilla que asocia un producto terminado con sus componentes.</DialogDescription>
+          <DialogContent className="w-[95vw] max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader className="pb-2">
+              <DialogTitle className="text-xl font-semibold">
+                {editingId ? 'Editar fórmula' : 'Nueva fórmula'}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                {editingId ? 'Actualiza los detalles de la fórmula' : 'Crea una plantilla que asocia un producto terminado con sus componentes'}
+              </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4 p-2">
-              <div>
-                <label className="text-sm">Nombre de la fórmula</label>
-                <Input value={nombre} onChange={(e) => setNombre(e.target.value)} maxLength={200} placeholder="Ej: Perfume Floral N°5 - Fórmula A" />
-              </div>
-              <div>
-                <label className="text-sm">Producto terminado</label>
-                <select className="w-full rounded-md border px-2 py-2" value={productoTerminadoId ?? ''} onChange={(e) => setProductoTerminadoId(e.target.value ? Number(e.target.value) : null)}>
-                  <option value="">-- Seleccione producto terminado --</option>
-                  {terminados.length === 0 ? (
-                    <option value="" disabled>-- No hay productos con almacén disponibles --</option>
-                  ) : (
-                    terminados.map((p) => (
-                      <option key={p.id} value={p.id}>{p.nombre || p.id}</option>
-                    ))
-                  )}
-                </select>
+            <div className="space-y-6 py-4 px-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium leading-none">
+                    Nombre de la fórmula <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    value={nombre}
+                    onChange={(e) => setNombre(e.target.value)}
+                    maxLength={200}
+                    placeholder="Ej: Perfume Floral N°5 - Fórmula A"
+                    className="w-full"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium leading-none">
+                    Producto terminado <span className="text-red-500">*</span>
+                  </label>
+                  <Combobox
+                    options={terminadosOptions}
+                    value={productoTerminadoId ? String(productoTerminadoId) : ""}
+                    onChange={(val) => setProductoTerminadoId(val ? Number(val) : null)}
+                    placeholder="Seleccione producto terminado"
+                    emptyText="No se encontraron productos"
+                  />
+                </div>
               </div>
 
               {/* Se eliminó la selección de tamaño: las presentaciones ahora están modeladas como fórmulas. */}
 
-              <div>
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium">Componentes</label>
-                  <Button size="sm" variant="outline" onClick={addComponente}>Agregar fila</Button>
+              <div className="border rounded-lg p-4 bg-muted/20">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h4 className="text-sm font-medium">Componentes</h4>
+                    <p className="text-xs text-muted-foreground">Agrega las materias primas necesarias</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={addComponente}
+                    className="gap-1 hover:bg-primary/10"
+                    type="button"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clipRule="evenodd" />
+                    </svg>
+                    Agregar componente
+                  </Button>
                 </div>
 
                 <div className="space-y-2 mt-2">
-                  {componentes.map((comp, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-end">
-                      <div className="col-span-5">
-                        <label className="text-xs">Materia prima</label>
-                        <select className="w-full rounded-md border px-2 py-2" value={comp.materia_prima_id ?? ''} onChange={(e) => {
-                          const val = e.target.value ? Number(e.target.value) : null;
-                          const mat = materias.find((m) => Number(m.id) === Number(val));
-                          const unidadMat = mat?.unidad || mat?.unidad_medida || mat?.unidad_nombre || '';
-                          setComponentes((c) => c.map((it, i) => i === idx ? { ...it, materia_prima_id: val, unidad: unidadMat } : it));
-                        }}>
-                          <option value="">-- Seleccione materia prima --</option>
-                          {materias.map((m) => (
-                            <option key={m.id} value={m.id}>{m.nombre || m.id}</option>
-                          ))}
-                        </select>
-                      </div>
+                  {componentes.map((comp, idx) => {
+                    const unitCost = getUnitCost(comp.materia_prima_id ?? null);
+                    const unitPrice = getUnitPrice(comp.materia_prima_id ?? null);
+                    const qty = Number(comp.cantidad || 0);
+                    const compCost = unitCost * qty;
+                    const compPrice = unitPrice * qty;
+                    return (
+                      <div key={idx} className="grid grid-cols-12 gap-3 items-end p-3 bg-gray-50 rounded-lg mb-2">
+                        <div className="col-span-12 md:col-span-6">
+                          <label className="text-xs font-medium text-gray-600 block mb-1">Materia prima</label>
+                          <Combobox
+                            options={materiasOptions}
+                            value={comp.materia_prima_id ? String(comp.materia_prima_id) : ""}
+                            onChange={(val) => {
+                              const value = val ? Number(val) : null;
+                              const mat = materias.find((m) => Number(m.id) === Number(value));
+                              const unidadMat = mat?.unidad || mat?.unidad_medida || mat?.unidad_nombre || '';
+                              setComponentes((c) => c.map((it, i) => i === idx ? { ...it, materia_prima_id: value, unidad: unidadMat } : it));
+                            }}
+                            placeholder="Seleccionar materia prima"
+                            emptyText="No se encontraron materias primas"
+                            className="w-full"
+                          />
+                        </div>
 
-                      <div className="col-span-3">
-                        <label className="text-xs">Cantidad</label>
-                        <Input type="number" min={0} value={comp.cantidad ?? ''} onChange={(e) => {
-                          const val = e.target.value ? Number(e.target.value) : null;
-                          setComponentes((c) => c.map((it, i) => i === idx ? { ...it, cantidad: val } : it));
-                        }} />
-                      </div>
+                        <div className="col-span-6 sm:col-span-2">
+                          <label className="text-xs font-medium text-gray-600 block mb-1">Cantidad</label>
+                          <div className="relative">
+                            <Input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              value={comp.cantidad ?? ''}
+                              onChange={(e) => {
+                                const val = e.target.value ? Number(e.target.value) : null;
+                                setComponentes((c) => c.map((it, i) => i === idx ? { ...it, cantidad: val } : it));
+                              }}
+                              className="w-full pl-3 pr-1 py-2"
+                            />
+                            {comp.unidad && (
+                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">
+                                {comp.unidad}
+                              </span>
+                            )}
+                          </div>
+                        </div>
 
-                      <div className="col-span-3">
-                        <label className="text-xs">Unidad</label>
-                        <input readOnly value={comp.unidad ?? ''} className="w-full rounded-md border px-2 py-2 bg-gray-50" />
-                      </div>
+                        <div className="col-span-4 sm:col-span-2">
+                          <label className="text-xs font-medium text-gray-600 block mb-1">Costo/u</label>
+                          <div className="text-sm p-2 bg-white rounded border border-gray-200">
+                            ${getUnitCost(comp.materia_prima_id ?? null).toFixed(2)}
+                          </div>
+                        </div>
 
-                      <div className="col-span-1">
-                        <Button variant="ghost" onClick={() => removeComponente(idx)}>X</Button>
+                        <div className="col-span-6 sm:col-span-1 flex items-end justify-end">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-red-500 hover:bg-red-50 h-9 w-9"
+                            onClick={() => removeComponente(idx)}
+                            title="Eliminar"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </Button>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
+                  <div ref={componentesEndRef} />
                 </div>
               </div>
 
-              <div>
-                <label className="text-sm">Costo estimado (calculado)</label>
-                <Input readOnly value={costo !== null && costo !== undefined ? String(costo) : ''} />
-              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Costo estimado</label>
+                  <div className="relative">
+                    <Input
+                      className="w-full pl-8"
+                      type="number"
+                      step="0.01"
+                      value={String(costo ?? 0)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const cleaned = v === '' ? 0 : parseFloat(String(v).replace(/[,]/g, '.'));
+                        const n = Number.isFinite(cleaned) ? cleaned : 0;
+                        setCosto(n);
+                      }}
+                      placeholder="0.00"
+                    />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Calculado: <span className="font-medium">${computedCosto.toFixed(2)}</span>
+                  </p>
+                </div>
 
-              <div>
-                <label className="text-sm">Precio de venta (editable)</label>
-                <Input type="number" step="0.01" value={precioVenta !== null && precioVenta !== undefined ? String(precioVenta) : ''} onChange={(e) => { setPrecioVenta(e.target.value === '' ? null : Number(e.target.value)); setPrecioManual(true); }} placeholder="Ingrese precio de venta" />
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Precio de venta</label>
+                  <div className="relative">
+                    <Input
+                      className="w-full pl-8"
+                      type="number"
+                      step="0.01"
+                      value={String(precioVenta ?? 0)}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const n = v === '' ? 0 : Number(v);
+                        setPrecioVenta(Number.isFinite(n) ? n : 0);
+                      }}
+                      placeholder="0.00"
+                    />
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Margen: <span className="font-medium">
+                      {costo > 0 ? `${((precioVenta / costo - 1) * 100).toFixed(1)}%` : '0%'}
+                    </span>
+                  </p>
+                </div>
               </div>
             </div>
 
-            <DialogFooter>
-              <Button variant="outline" onClick={() => { setIsOpen(false); resetForm(); }}>Cancelar</Button>
-              <Button disabled={submitting} onClick={handleCreate}>{submitting ? 'Creando...' : (editingId ? 'Guardar cambios' : 'Crear fórmula')}</Button>
+            <DialogFooter className="pt-4 border-t">
+              <Button
+                variant="outline"
+                onClick={() => { setIsOpen(false); resetForm(); }}
+                disabled={submitting}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleCreate}
+                disabled={submitting || !nombre || !productoTerminadoId}
+                className="gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    {editingId ? 'Guardando...' : 'Creando...'}
+                  </>
+                ) : editingId ? (
+                  'Guardar cambios'
+                ) : (
+                  'Crear fórmula'
+                )}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

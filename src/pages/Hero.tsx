@@ -33,16 +33,18 @@ export default function Hero() {
   const { items: cartItems, addItem, removeItem, updateQty, clear, count } = useCart();
   const [tasaPublic, setTasaPublic] = useState<any | null>(null);
 
-  // Load public catalog using server-side pagination and search
+  // Load public catalog - fetch all products once and handle pagination client-side
+  // Backend returns all products without server-side pagination
   useEffect(() => {
     let mounted = true;
     setLoading(true);
     (async () => {
       try {
-        const res = await getCatalogoPaginated({ q: search || undefined, limit: perPage, offset: (page - 1) * perPage });
+        // Fetch all products from backend (ignoring limit/offset since backend doesn't paginate)
+        const res = await getCatalogoPaginated({});
         // getCatalogoPaginated normaliza a { items, meta }
         const items = Array.isArray(res) ? res : (res?.items ?? res?.data ?? []);
-        const meta = res?.meta ?? null;
+
         let productsList: Product[] = (Array.isArray(items) ? items : []).map((item: any) => ({
           id: item.id ?? item.producto_id ?? 0,
           name: item.nombre ?? item.name ?? '',
@@ -64,29 +66,50 @@ export default function Hero() {
           marca_obj: item.marca ?? null,
         } as Product));
 
-        // Nota: anteriormente filtrábamos productos sin `tamanos` para ocultar variantes
-        // en el catálogo público. Eso causa que algunos productos no se muestren si
-        // el backend no incluye `tamanos` en la respuesta. Dejamos la lista tal cual
-        // para no ocultar productos inesperadamente.
-        // productsList = productsList.filter((p) => Array.isArray(p.tamanos) && p.tamanos.length > 0);
         if (!mounted) return;
-        setFullProducts(productsList);
-        setProducts(productsList);
-        // set total from meta if available
-        if (meta && (meta.total !== undefined && meta.total !== null)) setTotal(Number(meta.total));
-        else setTotal(Array.isArray(items) ? items.length : null);
+
+        // Apply search filter
+        const q = search.trim().toLowerCase();
+        const filtered = q
+          ? productsList.filter((p) => {
+            return (
+              (p.name || '').toLowerCase().includes(q) ||
+              (p.brand || '').toLowerCase().includes(q) ||
+              (p.description || '').toLowerCase().includes(q) ||
+              (p.category || '').toLowerCase().includes(q)
+            );
+          })
+          : productsList;
+
+        // Apply category filter if needed
+        const categoryFiltered = selectedCategory === 'all'
+          ? filtered
+          : filtered.filter((p) => (p.category || '').toLowerCase() === selectedCategory.toLowerCase());
+
+        // Store full filtered list
+        setFullProducts(categoryFiltered);
+
+        // Calculate pagination for current page
+        const totalCount = categoryFiltered.length;
+        const start = (page - 1) * perPage;
+        const pageItems = categoryFiltered.slice(start, start + perPage);
+
+        setProducts(pageItems);
+        setTotal(totalCount);
       } catch (err) {
         console.error('Error cargando catálogo público:', err);
         toast.error('Error al cargar catálogo público');
-        setFullProducts([]);
-        setProducts([]);
-        setTotal(0);
+        if (mounted) {
+          setFullProducts([]);
+          setProducts([]);
+          setTotal(0);
+        }
       } finally {
         if (mounted) setLoading(false);
       }
     })();
     return () => { mounted = false; };
-  }, [page, perPage, search]);
+  }, [page, perPage, search, selectedCategory]);
 
   // Obtener tasa pública cacheada para mostrar precios convertidos en el carrito público
   useEffect(() => {
@@ -102,33 +125,6 @@ export default function Hero() {
     })();
     return () => { mounted = false; };
   }, []);
-
-  // Compute filtered + paginated products whenever source or filters change
-  useEffect(() => {
-    if (!fullProducts) return;
-
-    const categoryFiltered = selectedCategory === 'all'
-      ? fullProducts
-      : fullProducts.filter((p) => (p.category || '').toLowerCase() === selectedCategory.toLowerCase());
-
-    const q = search.trim().toLowerCase();
-    const searched = q
-      ? categoryFiltered.filter((p) => {
-          return (
-            (p.name || '').toLowerCase().includes(q) ||
-            (p.brand || '').toLowerCase().includes(q) ||
-            (p.description || '').toLowerCase().includes(q) ||
-            (p.category || '').toLowerCase().includes(q)
-          );
-        })
-      : categoryFiltered;
-
-    const totalCount = searched.length;
-    const start = (page - 1) * perPage;
-    const pageItems = searched.slice(start, start + perPage);
-    setProducts(pageItems);
-    setTotal(totalCount);
-  }, [fullProducts, page, perPage, selectedCategory, search]);
 
   // not exposing categories selector on the public Hero
 
@@ -168,14 +164,14 @@ export default function Hero() {
             Sumérgete en nuestra exclusiva colección de fragancias que capturan la esencia del lujo y la sofisticación.
           </p>
           <div className="mt-8 sm:mt-10 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
-            <a 
-              href="#catalog" 
+            <a
+              href="#catalog"
               className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-4 bg-gradient-to-r from-primary-500 to-amber-600 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl hover:shadow-primary-500/30 transition-all duration-300 transform hover:-translate-y-1 text-sm sm:text-base"
             >
               Explorar Colección
             </a>
-            <Link 
-              to="/about" 
+            <Link
+              to="/about"
               className="w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-4 border-2 border-gray-200 bg-white/80 text-gray-700 font-medium rounded-lg hover:bg-white hover:border-primary-200 transition-all duration-300 backdrop-blur-sm text-sm sm:text-base text-center"
             >
               Nuestra Historia
@@ -184,11 +180,13 @@ export default function Hero() {
         </div>
       </section>
 
-      {/* Featured Products Carousel */}
-      <div className="relative z-10 py-8 sm:py-12 bg-gradient-to-b from-white/80 to-transparent">
-        {products.length > 0 && <ProductCarousel products={products} isMobile={isMobile} />}
-      </div>
-      
+      {/* Featured Products Carousel - Commented out for now */}
+      {/* {!search.trim() && (
+        <div className="relative z-10 py-8 sm:py-12 bg-gradient-to-b from-white/80 to-transparent">
+          {products.length > 0 && <ProductCarousel products={fullProducts || products} isMobile={isMobile} />}
+        </div>
+      )} */}
+
       <div id="catalog" className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12 relative z-10">
         <div className="text-center mb-8 sm:mb-12 px-2">
           <h2 className="text-2xl sm:text-3xl font-bell-mt font-bold text-gray-800 mb-2 sm:mb-3">Nuestros Productos</h2>
@@ -227,16 +225,16 @@ export default function Hero() {
             {total !== null ? `Mostrando página ${page} de ${Math.max(1, Math.ceil((total || 0) / perPage))} — ${total} productos` : ''}
           </div>
           <div className="flex items-center gap-2">
-            <button 
-              className="px-3 py-1.5 sm:py-1 text-sm rounded-md border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50" 
-              onClick={() => setPage((p) => Math.max(1, p - 1))} 
+            <button
+              className="px-3 py-1.5 sm:py-1 text-sm rounded-md border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
             >
               Anterior
             </button>
-            <button 
-              className="px-3 py-1.5 sm:py-1 text-sm rounded-md border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50" 
-              onClick={() => setPage((p) => p + 1)} 
+            <button
+              className="px-3 py-1.5 sm:py-1 text-sm rounded-md border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              onClick={() => setPage((p) => p + 1)}
               disabled={total !== null && page >= Math.max(1, Math.ceil((total || 0) / perPage))}
             >
               Siguiente
