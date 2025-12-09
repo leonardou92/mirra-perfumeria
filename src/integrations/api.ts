@@ -110,10 +110,15 @@ export async function getPedidos() {
   return apiFetch(`/pedidos-venta`);
 }
 
-export async function getPedidosPaginated(page = 1, limit = 12) {
-  return apiFetch(`/pedidos-venta/paginated?page=${page}&limit=${limit}`);
+export async function getPedidosPaginated(page = 1, limit = 12, estado?: string) {
+  let url = `/pedidos-venta/paginated?page=${page}&limit=${limit}`;
+  if (estado) url += `&estado=${encodeURIComponent(estado)}`;
+  return apiFetch(url);
 }
 
+export async function getPedidosStats() {
+  return apiFetch('/pedidos-venta/stats');
+}
 export async function getPedidoVenta(id: number) {
   return apiFetch(`/pedidos-venta/${id}`);
 }
