@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch, getOrdenProduccionDetailed } from '../integrations/api';
+import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch, getOrdenProduccionDetailed, completarOrdenProduccion, getAlmacenes } from '../integrations/api';
 // helpers
 const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
 function extractMonedaFromDetalles(detalles: any) {
@@ -213,6 +213,104 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     }
     return false;
   }
+
+  // Intentar completar automáticamente órdenes de producción asociadas a un pedido.
+  // Devuelve true si procesó (o no había) órdenes; lanza si alguna orden no pudo completarse.
+  async function tryAutoCompleteOrdersForPedido(id: number) {
+    try {
+      let ordResp: any = null;
+      try {
+        ordResp = await apiFetch(`/ordenes-produccion/detailed?pedido_id=${encodeURIComponent(String(id))}`);
+      } catch (e) {
+        try { ordResp = await apiFetch(`/ordenes-produccion?pedido_id=${encodeURIComponent(String(id))}`); } catch (e2) { ordResp = null; }
+      }
+      const ordList = Array.isArray(ordResp) ? ordResp : (ordResp?.data || []);
+      if (Array.isArray(ordList) && ordList.length > 0) {
+        // completar secuencialmente para evitar sobrecargas y permitir mensajes claros
+        for (const o of ordList) {
+          const oid = Number(o?.orden?.id ?? o?.id ?? o?.orden_id ?? null);
+          const estado = String(o?.orden?.estado ?? o?.estado ?? '').toLowerCase();
+          const completedFlag = Boolean(o?.orden?.completada === true || o?.orden?.finalizada === true || o?.orden?.cerrada === true || o?.orden?.completed === true || o?.orden?.finished === true || o?.completada === true || o?.finalizada === true || o?.cerrada === true || o?.completed === true || o?.finished === true);
+          if (Number.isFinite(oid) && oid > 0 && !completedFlag && !(estado && (estado.includes('complet') || estado.includes('finaliz') || estado.includes('cerrad') || estado.includes('done') || estado.includes('finished')))) {
+            // intentar determinar almacen_venta_id
+            let almacenId: number | null = null;
+            try {
+              almacenId = Number(o?.orden?.almacen_venta_id ?? o?.almacen_venta_id ?? null) || null;
+            } catch (e) { almacenId = null; }
+            if (!almacenId) {
+              try {
+                const ares: any = await getAlmacenes();
+                const list = Array.isArray(ares) ? ares : (ares?.data || []);
+                const venta = (list || []).find((a: any) => {
+                  if (!a) return false;
+                  if (a.es_materia_prima === true) return false;
+                  const tipo = String(a.tipo || '').toLowerCase();
+                  if (!tipo) return true;
+                  return !tipo.includes('materia') && !tipo.includes('materiaprima');
+                });
+                if (venta && venta.id) almacenId = Number(venta.id);
+              } catch (e) { /* ignore */ }
+            }
+            if (!almacenId) {
+              throw new Error('almacen_venta_id requerido e inválido');
+            }
+            await completarOrdenProduccion(oid, almacenId);
+          }
+        }
+      }
+      return true;
+    } catch (e) {
+      console.debug('tryAutoCompleteOrdersForPedido error', e);
+      throw e;
+    }
+  }
+
+    // Crear órdenes faltantes para un pedido (líneas con fórmula pero sin orden creada)
+    async function createMissingOrdersForPedido(id: number) {
+      try {
+        const p = await getPedidoVenta(id);
+        const prods = Array.isArray(p?.productos) ? p.productos : (Array.isArray(p?.lineas) ? p.lineas : []);
+        const missing = (prods || []).filter((it: any) => {
+          const fid = Number(it?.formula_id ?? it?.formulaId ?? it?.formula?.id ?? 0) || 0;
+          const created = (it?.produccion_creada === true) || Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.ordenes);
+          return fid && fid > 0 && !created;
+        });
+        if (missing.length === 0) return;
+        for (const line of missing) {
+          try {
+            let createdResp: any = null;
+            if (id && line?.id) {
+              try {
+                createdResp = await apiFetch(`/pedidos-venta/${id}/lineas/${line.id}/ordenes-produccion`, { method: 'POST' });
+              } catch (eLine) {
+                const payload: any = {
+                  producto_terminado_id: Number(line?.producto_id ?? line?.producto?.id ?? line?.producto_terminado_id ?? 0) || undefined,
+                  cantidad: Number(line?.cantidad ?? line?.qty ?? 0) || 0,
+                  formula_id: Number(line?.formula_id ?? line?.formula?.id ?? 0) || undefined,
+                  estado: 'Pendiente'
+                };
+                createdResp = await apiFetch('/ordenes-produccion', { method: 'POST', body: JSON.stringify(payload) });
+              }
+            } else {
+              const payload: any = {
+                producto_terminado_id: Number(line?.producto_id ?? line?.producto?.id ?? line?.producto_terminado_id ?? 0) || undefined,
+                cantidad: Number(line?.cantidad ?? line?.qty ?? 0) || 0,
+                formula_id: Number(line?.formula_id ?? line?.formula?.id ?? 0) || undefined,
+                estado: 'Pendiente'
+              };
+              createdResp = await apiFetch('/ordenes-produccion', { method: 'POST', body: JSON.stringify(payload) });
+            }
+            // Optionally notify or update local state
+          } catch (err) {
+            console.error('Error creando orden faltante para pedido', id, err);
+            throw err;
+          }
+        }
+      } catch (e) {
+        console.debug('createMissingOrdersForPedido error', e);
+        throw e;
+      }
+    }
 
   useEffect(() => {
     // Cuando cambia banco seleccionado, actualizar formas disponibles
@@ -877,7 +975,17 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
             throw err;
           }
         }
-        // Verificar que no hay líneas pendientes por producir antes de completar
+        // Intentar completar automáticamente órdenes de producción asociadas antes de bloquear
+        try {
+          await tryAutoCompleteOrdersForPedido(pedidoId);
+        } catch (errAuto) {
+          console.error('No se pudieron completar órdenes de producción automáticamente', errAuto);
+          toast.error('No se pudieron completar las órdenes de producción asociadas. Revise el servidor.');
+          setLoading(false);
+          return;
+        }
+        // Verificar y crear órdenes faltantes; luego comprobar si aún hay líneas pendientes
+        try { await createMissingOrdersForPedido(pedidoId); } catch (e) { console.debug(e); }
         if (await pedidoHasPendingProduction(pedidoId)) {
           toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
           setLoading(false);
@@ -987,6 +1095,7 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         // eslint-disable-next-line no-console
         console.debug('create-pago-final-single', payload.pago);
 
+        try { await createMissingOrdersForPedido(pedidoId); } catch (e) { console.debug(e); }
         if (await pedidoHasPendingProduction(pedidoId)) {
           toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
           setLoading(false);
@@ -1046,12 +1155,21 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         setLoading(true);
         setErrors(null);
         try {
-          if (await pedidoHasPendingProduction(pedidoId)) {
-            toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
-            setLoading(false);
-            return;
-          }
-          const data = await completarPedidoVenta(pedidoId);
+            try {
+              await tryAutoCompleteOrdersForPedido(pedidoId);
+            } catch (errAuto) {
+              console.error('No se pudieron completar órdenes de producción automáticamente', errAuto);
+              toast.error('No se pudieron completar las órdenes de producción asociadas. Revise el servidor.');
+              setLoading(false);
+              return;
+            }
+            try { await createMissingOrdersForPedido(pedidoId); } catch (e) { console.debug(e); }
+            if (await pedidoHasPendingProduction(pedidoId)) {
+              toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+              setLoading(false);
+              return;
+            }
+            const data = await completarPedidoVenta(pedidoId);
           if (onSuccess) onSuccess(data);
           setShowSuccess(true);
           setTimeout(() => setShowSuccess(false), 1600);
@@ -1177,6 +1295,15 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
 
         // Enviar en un solo paso: crear y completar el pedido (backend debe soportar crear+finalizar)
         // Esto evita duplicados al crear el pago por separado y luego completar.
+        try {
+          await tryAutoCompleteOrdersForPedido(pedidoId);
+        } catch (errAuto) {
+          console.error('No se pudieron completar órdenes de producción automáticamente', errAuto);
+          toast.error('No se pudieron completar las órdenes de producción asociadas. Revise el servidor.');
+          setLoading(false);
+          return;
+        }
+        try { await createMissingOrdersForPedido(pedidoId); } catch (e) { console.debug(e); }
         if (await pedidoHasPendingProduction(pedidoId)) {
           toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
           setLoading(false);

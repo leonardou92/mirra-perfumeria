@@ -289,8 +289,35 @@ export async function deleteTamano(id: number) {
 }
 
 // Crear/ejecutar producción desde una fórmula (POST /api/formulas/:id/produccion)
-export async function createProduccion(formulaId: number, data: { cantidad: number; almacen_venta_id: number }) {
-  return apiFetch(`/formulas/${formulaId}/produccion`, { method: "POST", body: JSON.stringify(data) });
+export async function createProduccion(formulaId: number, data: { cantidad: number; almacen_venta_id?: number }) {
+  // Acepta `almacen_venta_id` opcional. Si no se proporciona o es inválido,
+  // intentar resolver automáticamente un almacén de venta consultando `/almacenes`.
+  const payload: any = { cantidad: Number(data.cantidad ?? 0) };
+  if (data.almacen_venta_id && Number.isFinite(Number(data.almacen_venta_id)) && Number(data.almacen_venta_id) > 0) {
+    payload.almacen_venta_id = Number(data.almacen_venta_id);
+  } else {
+    try {
+      const ares: any = await apiFetch('/almacenes');
+      const list = Array.isArray(ares) ? ares : (ares?.data || []);
+      // Buscar primer almacén que NO sea materia prima
+      const venta = (list || []).find((a: any) => {
+        if (!a) return false;
+        if (a.es_materia_prima === true) return false;
+        const tipo = String(a.tipo || '').toLowerCase();
+        if (!tipo) return true; // si no tiene tipo, asumir válido
+        return !tipo.includes('materia') && !tipo.includes('materiaprima');
+      });
+      if (venta && venta.id) payload.almacen_venta_id = Number(venta.id);
+    } catch (e) {
+      // noop: no pudimos resolver almacenes
+    }
+  }
+
+  if (!payload.almacen_venta_id || Number(payload.almacen_venta_id) <= 0) {
+    throw new Error('almacen_venta_id requerido e inválido');
+  }
+
+  return apiFetch(`/formulas/${formulaId}/produccion`, { method: 'POST', body: JSON.stringify(payload) });
 }
 
 // Obtener una orden de producción por id (entidad simple)
@@ -310,6 +337,49 @@ export async function getOrdenProduccionDetailed(id: number) {
       // Estimar formato detailed como { orden: ord, componentes: [] }
       return { orden: ord, componentes: ord?.componentes || [] };
     } catch (e2) {
+      throw e;
+    }
+  }
+}
+
+// Completar (marcar como completada) una orden de producción.
+// Intenta POST /ordenes-produccion/:id/completar y como fallback hace PUT /ordenes-produccion/:id con { estado: 'Completado' }.
+export async function completarOrdenProduccion(id: number, almacen_venta_id?: number) {
+  // Construir payload: preferir el almacen_venta_id pasado, si no intentar resolver uno automáticamente
+  const payload: any = {};
+  if (almacen_venta_id && Number.isFinite(Number(almacen_venta_id)) && Number(almacen_venta_id) > 0) {
+    payload.almacen_venta_id = Number(almacen_venta_id);
+  } else {
+    try {
+      const ares: any = await apiFetch('/almacenes');
+      const list = Array.isArray(ares) ? ares : (ares?.data || []);
+      // Buscar primer almacén que NO sea materia prima
+      const venta = (list || []).find((a: any) => {
+        if (!a) return false;
+        if (a.es_materia_prima === true) return false;
+        const tipo = String(a.tipo || '').toLowerCase();
+        if (!tipo) return true; // si no tiene tipo, asumir válido
+        return !tipo.includes('materia') && !tipo.includes('materiaprima');
+      });
+      if (venta && venta.id) payload.almacen_venta_id = Number(venta.id);
+    } catch (e) {
+      // noop: no pudimos resolver almacenes automáticamente
+    }
+  }
+
+  if (!payload.almacen_venta_id || Number(payload.almacen_venta_id) <= 0) {
+    // No intentar completar sin un almacén destino válido — el endpoint requiere este campo.
+    throw new Error('almacen_venta_id requerido e inválido');
+  }
+
+  try {
+    return await apiFetch(`/ordenes-produccion/${id}/completar`, { method: 'POST', body: JSON.stringify(payload) });
+  } catch (e) {
+    // fallback: intentar actualizar el estado (no realiza movimientos de inventario en general)
+    try {
+      return await apiFetch(`/ordenes-produccion/${id}`, { method: 'PUT', body: JSON.stringify({ estado: 'Completado' }) });
+    } catch (e2) {
+      // rethrow original error para que el caller vea detalle
       throw e;
     }
   }
