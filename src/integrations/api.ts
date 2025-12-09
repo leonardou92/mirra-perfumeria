@@ -110,6 +110,10 @@ export async function getPedidos() {
   return apiFetch(`/pedidos-venta`);
 }
 
+export async function getPedidosPaginated(page = 1, limit = 12) {
+  return apiFetch(`/pedidos-venta/paginated?page=${page}&limit=${limit}`);
+}
+
 export async function getPedidoVenta(id: number) {
   return apiFetch(`/pedidos-venta/${id}`);
 }
@@ -785,7 +789,7 @@ export async function createPedidoVentaPublic(data: any) {
   // incluirlos y calcular total si es posible.
   if (payload._preserve_productos && Array.isArray(payload.productos) && payload.productos.length > 0) {
     // normalize numeric fields in productos
-      finalPayload.productos = payload.productos.map((p: any) => ({
+    finalPayload.productos = payload.productos.map((p: any) => ({
       id: p.id ?? undefined,
       pedido_venta_id: p.pedido_venta_id ?? undefined,
       producto_id: p.producto_id ?? p.productId ?? p.id,
@@ -796,11 +800,11 @@ export async function createPedidoVentaPublic(data: any) {
       image_url: p.image_url ?? p.imagen ?? p.image ?? undefined,
       subtotal: p.subtotal !== undefined ? Number(p.subtotal) : undefined,
       // preservar tamano en snapshot
-        // Preferir fórmula (nuevo) y mantener tamano por compatibilidad
-        formula_id: p.formula_id !== undefined ? (Number.isFinite(Number(p.formula_id)) ? Number(p.formula_id) : undefined) : undefined,
-        formula_nombre: p.formula_nombre !== undefined ? String(p.formula_nombre) : undefined,
-        tamano_id: p.tamano_id !== undefined ? (Number.isFinite(Number(p.tamano_id)) ? Number(p.tamano_id) : undefined) : undefined,
-        tamano_nombre: p.tamano_nombre !== undefined ? String(p.tamano_nombre) : undefined,
+      // Preferir fórmula (nuevo) y mantener tamano por compatibilidad
+      formula_id: p.formula_id !== undefined ? (Number.isFinite(Number(p.formula_id)) ? Number(p.formula_id) : undefined) : undefined,
+      formula_nombre: p.formula_nombre !== undefined ? String(p.formula_nombre) : undefined,
+      tamano_id: p.tamano_id !== undefined ? (Number.isFinite(Number(p.tamano_id)) ? Number(p.tamano_id) : undefined) : undefined,
+      tamano_nombre: p.tamano_nombre !== undefined ? String(p.tamano_nombre) : undefined,
     }));
     // calcular total si no fue provisto
     if (finalPayload.total === undefined) {
@@ -819,7 +823,7 @@ export async function createPedidoVentaPublic(data: any) {
     const err = new Error(txt || res.statusText);
     (err as any).status = res.status;
     if (res.status === 401) {
-      try { localStorage.removeItem('jwt_token'); } catch (e) {}
+      try { localStorage.removeItem('jwt_token'); } catch (e) { }
       // Nota: no forzamos redirect aquí porque este endpoint es público (checkout)
       // La UI local debe manejar mostrar el error o permitir fallback.
     }
@@ -875,7 +879,7 @@ async function apiFetch(endpoint: string, options: RequestInit = {}) {
     const err = new Error(txt || res.statusText);
     (err as any).status = res.status;
     if (res.status === 401) {
-      try { localStorage.removeItem('jwt_token'); } catch (e) {}
+      try { localStorage.removeItem('jwt_token'); } catch (e) { }
       // Si la 401 ocurre y NO estamos en la página pública (hero -> '/'),
       // redirigimos al login para forzar re-autenticación. Si estamos en
       // el landing público, no forzamos navegación (permitir vista pública).
