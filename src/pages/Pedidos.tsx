@@ -174,7 +174,15 @@ export default function Pedidos() {
   }, [page, limit]);
 
   const fmtCliente = (p: any) => p?.nombre_cliente || p?.cliente_nombre || p?.cliente?.nombre || 'Anónimo';
-  const fmtFecha = (p: any) => p?.fecha || p?.created_at || p?.createdAt || '-';
+  const fmtFecha = (p: any) => {
+    const val = p?.fecha || p?.created_at || p?.createdAt;
+    if (!val) return '-';
+    try {
+      return format(new Date(val), 'dd/MM/yyyy hh:mm a');
+    } catch (e) {
+      return val;
+    }
+  };
   const fmtProductosCount = (p: any) => Array.isArray(p?.productos) ? p.productos.length : 0;
   const fmtEstado = (p: any) => p?.estado || p?.status || '-';
   const fmtTotal = (p: any) => {
@@ -1070,24 +1078,49 @@ export default function Pedidos() {
           <div className="text-sm text-muted-foreground">
             Mostrando página {page} de {totalPages} ({totalOrders} pedidos)
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-1">
             <Button
               variant="outline"
               size="sm"
               onClick={() => setPage(p => Math.max(1, p - 1))}
               disabled={page === 1 || loading}
             >
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              Anterior
+              <ChevronLeft className="h-4 w-4" />
             </Button>
+
+            {/* Page Numbers */}
+            {(() => {
+              const items = [];
+              const maxVisible = 5;
+              let start = Math.max(1, page - 2);
+              let end = Math.min(totalPages, start + maxVisible - 1);
+              if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
+
+              if (start > 1) {
+                items.push(<Button key={1} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setPage(1)}>1</Button>);
+                if (start > 2) items.push(<span key="d1" className="px-1 text-muted-foreground">...</span>);
+              }
+
+              for (let i = start; i <= end; i++) {
+                items.push(
+                  <Button key={i} variant={i === page ? 'default' : 'outline'} size="sm" className="w-8 h-8 p-0" onClick={() => setPage(i)}>{i}</Button>
+                );
+              }
+
+              if (end < totalPages) {
+                if (end < totalPages - 1) items.push(<span key="d2" className="px-1 text-muted-foreground">...</span>);
+                items.push(<Button key={totalPages} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setPage(totalPages)}>{totalPages}</Button>);
+              }
+              return items;
+            })()}
+
             <Button
               variant="outline"
               size="sm"
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               disabled={page === totalPages || loading}
             >
-              Siguiente
-              <ChevronRight className="h-4 w-4 ml-1" />
+              <ChevronRight className="h-4 w-4" />
             </Button>
           </div>
         </div>
