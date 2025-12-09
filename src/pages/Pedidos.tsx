@@ -3,10 +3,10 @@ import React, { useEffect, useState } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas } from "@/integrations/api";
+import { getPedidosStats, getPedidosPaginated, getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas } from "@/integrations/api";
 import PaymentByBank from '@/components/PaymentByBank';
 import { parseApiError, getImageUrl } from '@/lib/utils';
-import { Eye } from 'lucide-react';
+import { Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
   Dialog,
@@ -23,8 +23,13 @@ import { toast } from "sonner";
 
 export default function Pedidos() {
   const [pedidos, setPedidos] = useState<any[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalOrders, setTotalOrders] = useState(0);
+  const [limit] = useState(12);
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState<string>('');
+  const [stats, setStats] = useState({ todos: 0, pendiente: 0, enviado: 0, completado: 0, cancelado: 0 });
   const [newOrdersCount, setNewOrdersCount] = useState<number>(0);
   const [pagosMap, setPagosMap] = useState<Record<number, any[]>>({});
   // Refrescar y reconstruir el mapa de pagos por pedido
@@ -85,14 +90,41 @@ export default function Pedidos() {
     return `transition-transform transform hover:scale-[1.01] duration-150 rounded-md ${bg} ${borderColor} border-l-4 ${recent ? 'shadow-md' : 'shadow-sm'}`;
   };
 
+  const fetchStats = async () => {
+    try {
+      const res = await getPedidosStats();
+      // res structure: { Pendiente: 5, Enviado: 2, Completado: 10, Cancelado: 1, Total: 18 }
+      setStats({
+        todos: res.Total || 0,
+        pendiente: res.Pendiente || 0,
+        enviado: res.Enviado || 0,
+        completado: res.Completado || 0,
+        cancelado: res.Cancelado || 0
+      });
+    } catch (e) {
+      console.error('Error cargando estadísticas', e);
+    }
+  };
+
   useEffect(() => {
     setLoading(true);
-    // Cargar pedidos y luego el mapa de pagos
+    // Cargar pedidos paginados (filtrados por estado si aplica) y luego el mapa de pagos
     (async () => {
       try {
-        const data = await getPedidos();
-        const list = Array.isArray(data) ? data : (data && Array.isArray((data as any).data) ? (data as any).data : []);
+        // Cargar estadísticas solo si es la primera carga o si es necesario refrescar
+        // (Opcional: mover a un useEffect separado si no queremos recargar stats al paginar)
+        await fetchStats();
+
+        const res = await getPedidosPaginated(page, limit, selectedStatus || undefined);
+        // Handle response structure: { data: [], total: 50, page: 1, limit: 12, totalPages: 5 }
+        const list = Array.isArray(res) ? res : (res?.data || []);
         setPedidos(sortPedidosByDateDesc(list));
+
+        if (res && typeof res === 'object' && !Array.isArray(res)) {
+          setTotalPages(res.totalPages || 1);
+          setTotalOrders(res.total || list.length);
+        }
+
         // Construir mapa de pagos
         await refreshPagosMap();
       } catch (err) {
@@ -107,10 +139,10 @@ export default function Pedidos() {
         setLoading(false);
       }
     })();
-  }, [navigate]);
+  }, [navigate, page, limit, selectedStatus]);
 
-  // Filtrado local por estado
-  const visiblePedidos = selectedStatus ? pedidos.filter((p: any) => (p.estado || p.status || '').toString() === selectedStatus) : pedidos;
+  // Filtrado local ya no es necesario porque filtramos en servidor
+  const visiblePedidos = pedidos;
 
   // Mapea estado a color de badge
   const estadoColor = (estado: string | undefined) => {
@@ -123,51 +155,62 @@ export default function Pedidos() {
   };
 
   const allStatuses = ['Pendiente', 'Enviado', 'Completado', 'Cancelado'];
-  const countFor = (st: string) => pedidos.filter((p: any) => (p.estado || p.status || '').toString().toLowerCase() === st.toLowerCase()).length;
+  const countFor = (st: string) => {
+    const k = st.toLowerCase();
+    if (k === 'pendiente') return stats.pendiente;
+    if (k === 'enviado') return stats.enviado;
+    if (k === 'completado') return stats.completado;
+    if (k === 'cancelado') return stats.cancelado;
+    return 0;
+  };
 
   // Notificaciones: usar polling cada 15s (el endpoint SSE no existe en este backend)
+  // Polling disabled for pagination efficiency or adjusted to just refresh current page silently?
+  // For now, let's disable polling to avoid overwriting pagination state unexpectedly or making too many requests.
+  // If real-time updates are needed, we should poll only the current page.
   useEffect(() => {
     let polling: any = null;
-    (async () => {
+    polling = setInterval(async () => {
       try {
-        const fresh = await getPedidos();
-        if (Array.isArray(fresh)) setPedidos(fresh);
-      } catch (e) {
-        // ignore
-      }
-      polling = setInterval(async () => {
-        try {
-          const fresh = await getPedidos();
-          if (Array.isArray(fresh)) {
-            // Ordenar y usar actualización funcional para comparar con el estado previo
-            const sortedFresh = sortPedidosByDateDesc(fresh);
-            setPedidos((prev) => {
-              try {
-                if (sortedFresh.length > (prev?.length || 0)) {
-                  setNewOrdersCount((c) => c + (sortedFresh.length - (prev?.length || 0)));
-                  toast.success(`Hay ${sortedFresh.length - (prev?.length || 0)} pedidos nuevos`);
-                }
-              } catch (err) {
-                console.debug(err);
-              }
-              return sortedFresh;
-            });
-            // refrescar pagosMap en background para mantener el listado sincronizado
-            try { await refreshPagosMap(); } catch (e) { console.debug(e); }
+        // Poll current page
+        const res = await getPedidosPaginated(page, limit);
+        const fresh = Array.isArray(res) ? res : (res?.data || []);
+
+        if (Array.isArray(fresh)) {
+          const sortedFresh = sortPedidosByDateDesc(fresh);
+          setPedidos((prev) => {
+            // Check if there are new orders (this logic is harder with pagination, 
+            // as new orders might push current orders to next page)
+            // For simplicity, just update the list if it changed significantly or just replace it.
+            // We won't show "new orders count" easily without a global check.
+            return sortedFresh;
+          });
+          if (res && typeof res === 'object' && !Array.isArray(res)) {
+            setTotalPages(res.totalPages || 1);
+            setTotalOrders(res.total || fresh.length);
           }
-        } catch (e) {
-          console.debug(e);
+          try { await refreshPagosMap(); } catch (e) { console.debug(e); }
         }
-      }, 15000);
-    })();
+      } catch (e) {
+        console.debug(e);
+      }
+    }, 15000);
 
     return () => {
       if (polling) clearInterval(polling);
     };
-  }, []);
+  }, [page, limit]);
 
   const fmtCliente = (p: any) => p?.nombre_cliente || p?.cliente_nombre || p?.cliente?.nombre || 'Anónimo';
-  const fmtFecha = (p: any) => p?.fecha || p?.created_at || p?.createdAt || '-';
+  const fmtFecha = (p: any) => {
+    const val = p?.fecha || p?.created_at || p?.createdAt;
+    if (!val) return '-';
+    try {
+      return format(new Date(val), 'dd/MM/yyyy hh:mm a');
+    } catch (e) {
+      return val;
+    }
+  };
   const fmtProductosCount = (p: any) => Array.isArray(p?.productos) ? p.productos.length : 0;
   const fmtEstado = (p: any) => p?.estado || p?.status || '-';
   const fmtTotal = (p: any) => {
@@ -194,7 +237,7 @@ export default function Pedidos() {
     const tRaw = p?.tasa_cambio_monto ?? p?.tasa ?? null;
     const tNum = typeof tRaw === 'number' ? tRaw : (tRaw ? Number(String(tRaw).replace(',', '.')) : null);
     const tasaVal = Number.isFinite(tNum) && tNum > 0 ? tNum : null;
-    const simbolo = p?.tasa_simbolo || (p?.tasa && p.tasa.simbolo) || 'USD';
+    const simbolo = p?.tasa_simbolo || (p?.tasa && p.tasa.simbolo) || 'Bs';
 
     if (tasaVal) {
       const converted = base * tasaVal;
@@ -1057,6 +1100,58 @@ export default function Pedidos() {
             )}
           </CardContent>
         </Card>
+
+        {/* Pagination Controls */}
+        <div className="flex items-center justify-between mt-4">
+          <div className="text-sm text-muted-foreground">
+            Mostrando página {page} de {totalPages} ({totalOrders} pedidos)
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1 || loading}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+
+            {/* Page Numbers */}
+            {(() => {
+              const items = [];
+              const maxVisible = 5;
+              let start = Math.max(1, page - 2);
+              let end = Math.min(totalPages, start + maxVisible - 1);
+              if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
+
+              if (start > 1) {
+                items.push(<Button key={1} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setPage(1)}>1</Button>);
+                if (start > 2) items.push(<span key="d1" className="px-1 text-muted-foreground">...</span>);
+              }
+
+              for (let i = start; i <= end; i++) {
+                items.push(
+                  <Button key={i} variant={i === page ? 'default' : 'outline'} size="sm" className="w-8 h-8 p-0" onClick={() => setPage(i)}>{i}</Button>
+                );
+              }
+
+              if (end < totalPages) {
+                if (end < totalPages - 1) items.push(<span key="d2" className="px-1 text-muted-foreground">...</span>);
+                items.push(<Button key={totalPages} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setPage(totalPages)}>{totalPages}</Button>);
+              }
+              return items;
+            })()}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages || loading}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
 
 
 
