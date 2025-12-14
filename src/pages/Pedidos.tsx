@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getPedidosStats, getPedidosPaginated, getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas, completarOrdenProduccion } from "@/integrations/api";
+import { getPedidosStats, getPedidosPaginated, getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas, completarOrdenProduccion, searchPedidos } from "@/integrations/api";
 import PaymentByBank from '@/components/PaymentByBank';
 import { parseApiError, getImageUrl } from '@/lib/utils';
 import { Eye, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -32,6 +32,10 @@ export default function Pedidos() {
   const [stats, setStats] = useState({ todos: 0, pendiente: 0, enviado: 0, completado: 0, cancelado: 0 });
   const [newOrdersCount, setNewOrdersCount] = useState<number>(0);
   const [pagosMap, setPagosMap] = useState<Record<number, any[]>>({});
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
   // Refrescar y reconstruir el mapa de pagos por pedido
   const refreshPagosMap = async () => {
     try {
@@ -141,8 +145,71 @@ export default function Pedidos() {
     })();
   }, [navigate, page, limit, selectedStatus]);
 
+  // Obtener pedidos paginados o resultados de búsqueda
+  useEffect(() => {
+    const fetchPedidos = async () => {
+      setLoading(true);
+      try {
+        if (searchTerm.trim()) {
+          // Si el término de búsqueda es un número, buscar por ID exacto
+          const searchTermStr = searchTerm.trim();
+          const isNumericSearch = /^\d+$/.test(searchTermStr);
+          
+          let results;
+          if (isNumericSearch) {
+            // Para búsqueda por ID, forzamos búsqueda exacta
+            results = await searchPedidos(searchTermStr);
+            // Si es un solo resultado, lo convertimos a array
+            const list = Array.isArray(results) ? results : [results];
+            // Filtramos por ID exacto por si la API devolvió más resultados
+            const filteredList = list.filter(p => p?.id?.toString() === searchTermStr);
+            setPedidos(filteredList);
+            setTotalOrders(filteredList.length);
+          } else {
+            // Para búsqueda por texto
+            results = await searchPedidos(searchTermStr);
+            const list = Array.isArray(results) ? results : [results];
+            setPedidos(list);
+            setTotalOrders(list.length);
+          }
+          setTotalPages(1);
+        } else {
+          // Si no hay búsqueda, usar la paginación normal
+          const { data, total } = await getPedidosPaginated(page, limit, selectedStatus);
+          setPedidos(data);
+          setTotalOrders(total);
+          setTotalPages(Math.ceil(total / limit));
+        }
+      } catch (err) {
+        console.error('Error fetching pedidos:', err);
+        if (!(err instanceof Error && err.message.includes('Término de búsqueda'))) {
+          toast.error('Error al cargar los pedidos');
+        }
+        // En caso de error, mostrar lista vacía
+        setPedidos([]);
+        setTotalOrders(0);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const debounceTimer = setTimeout(() => {
+      fetchPedidos();
+    }, 300); // Pequeño debounce para evitar múltiples búsquedas rápidas
+
+    return () => clearTimeout(debounceTimer);
+  }, [page, limit, selectedStatus, searchTerm]);
+
   // Filtrado local ya no es necesario porque filtramos en servidor
   const visiblePedidos = pedidos;
+
+  // Manejar búsqueda de pedidos
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Al enviar el formulario, el efecto se encargará de la búsqueda
+    // ya que depende de searchTerm
+  };
+
 
   // Mapea estado a color de badge
   const estadoColor = (estado: string | undefined) => {
@@ -338,7 +405,7 @@ export default function Pedidos() {
       for (const it of prods) {
         const fid = Number(it?.formula_id ?? it?.formulaId ?? it?.formula?.id ?? 0) || 0;
         if (fid && fid > 0) {
-          const created = (it?.produccion_creada === true) || Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.orden_produccion_id);
+          const created = (it?.produccion_creada === true) || Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
           if (!created) return true;
         }
       }
@@ -427,7 +494,7 @@ export default function Pedidos() {
       // Preferir el almacén asociado al pedido/linea si existe
       let preferido: number | null = null;
       try {
-        const cand = line?.almacen_id ?? line?.almacenVentaId ?? line?.almacen_venta_id ?? selectedPedido?.almacen_id ?? selectedPedido?.almacen_venta_id ?? selectedPedido?.almacenId ?? null;
+        const cand = line?.almacen_id ?? line?.almacen_venta_id ?? line?.almacenVentaId ?? selectedPedido?.almacen_id ?? selectedPedido?.almacen_venta_id ?? selectedPedido?.almacenId ?? null;
         if (cand) preferido = Number(cand);
       } catch (e) { console.debug(e); }
       const venta = ventaList.find((a: any) => Number(a.id) === Number(preferido)) || ventaList.find((a: any) => a.tipo === 'Venta') || ventaList[0];
@@ -634,7 +701,7 @@ export default function Pedidos() {
 
             const updatedProductos = (selectedPedido.productos || []).map((p: any) => {
               if (matchLine(p, prodLine)) {
-                return { ...p, produccion_creada: true, orden_id: ordenId ?? p.orden_id ?? p.ordenes_produccion_id ?? p.orden_produccion_id ?? null };
+                return { ...p, produccion_creada: true, orden_id: ordenId ?? p.orden_id ?? p.orden_produccion_id ?? null };
               }
               return p;
             });
@@ -1202,11 +1269,29 @@ export default function Pedidos() {
   return (
     <Layout>
       <div className="space-y-6 p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col md:flex-row justify-between gap-4 items-start md:items-center">
           <div>
             <h1 className="text-2xl font-bold">Pedidos</h1>
             <p className="text-sm text-muted-foreground">Listado de pedidos recibidos</p>
           </div>
+          <form onSubmit={handleSearch} className="relative w-full md:w-96">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Buscar por ID, nombre o cédula..."
+                className="w-full pl-4 pr-10 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+              <button
+                type="submit"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                disabled={isSearching}
+              >
+                {isSearching ? 'Buscando...' : '🔍'}
+              </button>
+            </div>
+          </form>
         </div>
 
         {/* Filtros rápidos por estado (ubicados arriba del listado) */}

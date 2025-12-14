@@ -116,6 +116,13 @@ export async function getPedidosPaginated(page = 1, limit = 12, estado?: string)
   return apiFetch(url);
 }
 
+export async function searchPedidos(term: string) {
+  if (!term || term.trim() === '') {
+    throw new Error('Término de búsqueda requerido');
+  }
+  return apiFetch(`/pedidos-venta/buscar?q=${encodeURIComponent(term)}`);
+}
+
 export async function getPedidosStats() {
   return apiFetch('/pedidos-venta/stats');
 }
