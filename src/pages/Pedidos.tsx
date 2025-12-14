@@ -1460,6 +1460,7 @@ export default function Pedidos() {
                           <th className="pb-2">Costo</th>
                           <th className="pb-2">Cantidad</th>
                           <th className="pb-2">Subtotal</th>
+                          <th className="pb-2">Producción</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1529,23 +1530,23 @@ export default function Pedidos() {
                                   // No hay componentes disponibles: mostrar botón para producir
                                   return (
                                     <div className="mt-2 flex items-center gap-2">
-                                      <Button size="sm" variant="outline" onClick={() => openProduceModalForLine(it)}>Producir</Button>
-                                      {/* Botón eliminar línea (solo si no tiene orden de producción asociada) */}
-                                      {(() => {
-                                        const hasOrder = Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
-                                        const createdFlag = (it?.produccion_creada === true);
-                                        const canDelete = !hasOrder && !createdFlag;
-                                        return (
-                                          <Button
-                                            size="sm"
-                                            variant="destructive"
-                                            onClick={(e) => { e.stopPropagation(); setDeleteLine(it); setDeleteModalOpen(true); }}
-                                            disabled={!canDelete}
-                                            title={canDelete ? 'Eliminar línea' : 'No se puede eliminar: orden de producción asociada'}
-                                          >Eliminar</Button>
-                                        );
-                                      })()}
-                                    </div>
+                              <Button size="sm" variant="outline" onClick={() => openProduceModalForLine(it)}>Producir</Button>
+                              {/* Botón eliminar línea (solo si no tiene orden de producción asociada) */}
+                              {(() => {
+                                const hasOrder = Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
+                                const createdFlag = (it?.produccion_creada === true);
+                                const canDelete = !hasOrder && !createdFlag;
+                                return (
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    onClick={(e) => { e.stopPropagation(); setDeleteLine(it); setDeleteModalOpen(true); }}
+                                    disabled={!canDelete}
+                                    title={canDelete ? 'Eliminar línea' : 'No se puede eliminar: orden de producción asociada'}
+                                  >Eliminar</Button>
+                                );
+                              })()}
+                            </div>
                                   );
                                 })()}
                               </div>
@@ -1554,6 +1555,13 @@ export default function Pedidos() {
                             <td className="py-2">{typeof it.costo === 'number' ? `$${it.costo.toFixed(2)}` : it.costo}</td>
                             <td className="py-2">{it.cantidad}</td>
                             <td className="py-2">{typeof it.subtotal === 'number' ? `$${it.subtotal.toFixed(2)}` : it.subtotal}</td>
+                            <td className="py-2">
+                              {it.produccion_creada ? (
+                                <Badge variant="default" className="bg-green-500">Creada</Badge>
+                              ) : (
+                                <Badge variant="destructive">Pendiente</Badge>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
