@@ -271,6 +271,7 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
             // Intentar completar la orden, pero si falla (p.ej. ya completada), continuar
             try {
               if (almacenId) {
+                console.log('🏭 Completando orden de producción:', oid, '| almacen_venta_id:', almacenId);
                 await completarOrdenProduccion(oid, almacenId);
                 console.log('✅ Orden de producción completada:', oid);
               } else {
