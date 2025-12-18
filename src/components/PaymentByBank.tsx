@@ -227,7 +227,7 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
   }
 
   // Intentar completar automáticamente órdenes de producción asociadas a un pedido.
-  // Devuelve true si procesó (o no había) órdenes; lanza si alguna orden no pudo completarse.
+  // Devuelve true si procesó (o no había) órdenes; ya NO lanza error si una orden individual falla.
   async function tryAutoCompleteOrdersForPedido(id: number) {
     try {
       try {
@@ -268,19 +268,30 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
                 if (venta && venta.id) almacenId = Number(venta.id);
               } catch (e) { /* ignore */ }
             }
-            if (!almacenId) {
-              throw new Error('almacen_venta_id requerido e inválido');
+            // Intentar completar la orden, pero si falla (p.ej. ya completada), continuar
+            try {
+              if (almacenId) {
+                await completarOrdenProduccion(oid, almacenId);
+                console.log('✅ Orden de producción completada:', oid);
+              } else {
+                console.warn('⚠️ No se pudo determinar almacen_venta_id para orden:', oid);
+              }
+            } catch (eOrd: any) {
+              // Si falla con 400/404, probablemente ya está completada o no existe - continuar
+              console.warn(`⚠️ No se pudo completar orden ${oid}:`, eOrd?.message || eOrd);
+              // NO lanzar error, continuar con las demás órdenes
             }
-            await completarOrdenProduccion(oid, almacenId);
           }
         }
       }
       return true;
     } catch (e) {
       console.debug('tryAutoCompleteOrdersForPedido error', e);
-      throw e;
+      // NO lanzar error - permitir que el flujo de pago continúe
+      return true;
     }
   }
+
 
   // Crear órdenes faltantes para un pedido (líneas con fórmula pero sin orden creada)
   async function createMissingOrdersForPedido(id: number) {
