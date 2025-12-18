@@ -6,6 +6,11 @@ import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVe
 // helpers
 const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
 function extractMonedaFromDetalles(detalles: any) {
+  try {
+    console.log('PaymentByBank.extractMonedaFromDetalles', { detalles });
+  } catch (e) {
+    // ignore log error
+  }
   if (!detalles) return null;
   try {
     if (typeof detalles === 'string') {
@@ -120,10 +125,12 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
   }, []);
 
   useEffect(() => {
+    console.log('PaymentByBank.useEffect2.start', { pedidoId });
     // Cargar datos del pedido para obtener total y validar sumas
     async function loadPedido() {
       if (!pedidoId) return;
       try {
+        console.log('PaymentByBank.loadPedido.start', { pedidoId });
         const p = await getPedidoVenta(pedidoId);
         setPedidoData(p);
         const total = Number(p?.total ?? p?.monto_total ?? p?.total_pedido ?? 0);
@@ -179,6 +186,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
   // Helper: comprobar si el pedido tiene líneas pendientes por producir
   async function pedidoHasPendingProduction(id: number) {
     try {
+      try {
+        console.log('PaymentByBank.pedidoHasPendingProduction.start', { id });
+      } catch (e) {
+        // ignore log
+      }
       const p = await getPedidoVenta(id);
       const prods = Array.isArray(p?.productos) ? p.productos : (Array.isArray(p?.lineas) ? p.lineas : []);
       for (const it of (prods || [])) {
@@ -198,7 +210,7 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
             const estadoRaw = String(ordObj?.estado ?? ordObj?.status ?? ordObj?.estado_nombre ?? '').toLowerCase();
             const completedFlag = Boolean(ordObj?.completada === true || ordObj?.finalizada === true || ordObj?.cerrada === true || ordObj?.completed === true || ordObj?.finished === true);
             if (completedFlag) continue;
-            if (estadoRaw && (estadoRaw.includes('complet') || estadoRaw.includes('finaliz') || estadoRaw.includes('cerrad') || estadoRaw.includes('done') || estadoRaw.includes('finished'))) {
+            if (estadoRaw && (estadoRaw.includes('completado') || estadoRaw.includes('completada') || estadoRaw.includes('cerrad') || estadoRaw.includes('done') || estadoRaw.includes('finished'))) {
               continue;
             }
             // si no está completada, considerarla pendiente
@@ -218,6 +230,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
   // Devuelve true si procesó (o no había) órdenes; lanza si alguna orden no pudo completarse.
   async function tryAutoCompleteOrdersForPedido(id: number) {
     try {
+      try {
+        console.log('PaymentByBank.tryAutoCompleteOrdersForPedido.start', { id });
+      } catch (e) {
+        // ignore log
+      }
       let ordResp: any = null;
       try {
         ordResp = await apiFetch(`/ordenes-produccion/detailed?pedido_id=${encodeURIComponent(String(id))}`);
@@ -231,7 +248,7 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
           const oid = Number(o?.orden?.id ?? o?.id ?? o?.orden_id ?? null);
           const estado = String(o?.orden?.estado ?? o?.estado ?? '').toLowerCase();
           const completedFlag = Boolean(o?.orden?.completada === true || o?.orden?.finalizada === true || o?.orden?.cerrada === true || o?.orden?.completed === true || o?.orden?.finished === true || o?.completada === true || o?.finalizada === true || o?.cerrada === true || o?.completed === true || o?.finished === true);
-          if (Number.isFinite(oid) && oid > 0 && !completedFlag && !(estado && (estado.includes('complet') || estado.includes('finaliz') || estado.includes('cerrad') || estado.includes('done') || estado.includes('finished')))) {
+          if (Number.isFinite(oid) && oid > 0 && !completedFlag && !(estado && (estado.includes('completado') || estado.includes('completada') || estado.includes('cerrad') || estado.includes('done') || estado.includes('finished')))) {
             // intentar determinar almacen_venta_id
             let almacenId: number | null = null;
             try {
@@ -268,6 +285,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
     // Crear órdenes faltantes para un pedido (líneas con fórmula pero sin orden creada)
     async function createMissingOrdersForPedido(id: number) {
       try {
+        try {
+          console.log('PaymentByBank.createMissingOrdersForPedido.start', { id });
+        } catch (e) {
+          // ignore log
+        }
         const p = await getPedidoVenta(id);
         const prods = Array.isArray(p?.productos) ? p.productos : (Array.isArray(p?.lineas) ? p.lineas : []);
         const missing = (prods || []).filter((it: any) => {
@@ -560,6 +582,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
   }, [bancos, pedidoTotal]);
 
   function validate(): boolean {
+    try {
+      console.log('PaymentByBank.validate.start', { selectedFormaId, monto, selectedBancoId, referencia });
+    } catch (e) {
+      // ignore log
+    }
     setErrors(null);
     const m = Number(String(monto).replace(',', '.'));
     if (!selectedFormaId) {
@@ -591,6 +618,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
   }
 
   function validateForAdd(): boolean {
+    try {
+      console.log('PaymentByBank.validateForAdd.start', { selectedFormaId, monto, selectedBancoId, referencia });
+    } catch (e) {
+      // ignore log
+    }
     // Similar a validate pero no requiere referencia si se va a acumular pagos (mantenemos la misma regla)
     setErrors(null);
     const m = Number(String(monto).replace(',', '.'));
@@ -623,6 +655,11 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
 
   async function checkTasaForBanco(bancoId?: number | null) {
     try {
+      try {
+        console.log('PaymentByBank.checkTasaForBanco.start', { bancoId });
+      } catch (e) {
+        // ignore log
+      }
       if (!bancoId) return true; // no banco -> backend puede fallback
       const banco = bancos.find((b) => b.id === bancoId) as any | undefined;
       const moneda = banco?.moneda ?? banco?.currency ?? null;
@@ -657,6 +694,18 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
   }
 
   async function handleAddPayment() {
+    try {
+      console.log('PaymentByBank.handleAddPayment.start', {
+        selectedFormaId,
+        selectedBancoId,
+        monto,
+        referencia,
+        fecha,
+        resolvedMoneda,
+      });
+    } catch (e) {
+      // ignore log
+    }
     if (!validateForAdd()) return;
     // comprobar tasa del banco si aplica
     if (selectedBancoId) {
@@ -1768,7 +1817,7 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         {showSuccess && (
           <div className="pointer-events-none fixed inset-0 flex items-center justify-center z-50">
             <div className="bg-white/90 p-6 rounded-full shadow-lg flex items-center justify-center animate-pulse">
-              <svg className="w-16 h-16 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <svg className="w-16 h-16 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>

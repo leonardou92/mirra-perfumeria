@@ -336,7 +336,22 @@ export async function getOrdenProduccion(id: number) {
 // Intenta llamar al endpoint /ordenes-produccion/detailed?id=123 que algunos backends exponen.
 export async function getOrdenProduccionDetailed(id: number) {
   try {
-    return await apiFetch(`/ordenes-produccion/detailed?id=${encodeURIComponent(String(id))}`);
+    const res = await apiFetch(`/ordenes-produccion/detailed?id=${encodeURIComponent(String(id))}`);
+    // El backend puede devolver un array de todas las órdenes en vez de filtrar por id.
+    // Si es un array, buscamos la orden específica dentro del array.
+    if (Array.isArray(res)) {
+      const found = res.find((item: any) => {
+        const orderId = Number(item?.orden?.id ?? item?.id ?? 0);
+        return orderId === Number(id);
+      });
+      if (found) {
+        // Normalizar al formato esperado { orden: {...}, componentes: [...] }
+        return { orden: found?.orden ?? found, componentes: found?.componentes || [] };
+      }
+      // Si no encontramos la orden en el array, hacer fallback al endpoint simple
+      throw new Error('Orden no encontrada en array');
+    }
+    return res;
   } catch (e) {
     // Fallback: intentar el endpoint simple y devolver en formato compatible
     try {
