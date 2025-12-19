@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { getPedidosStats, getPedidosPaginated, getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas, completarOrdenProduccion, searchPedidos } from "@/integrations/api";
 import PaymentByBank from '@/components/PaymentByBank';
 import { parseApiError, getImageUrl } from '@/lib/utils';
-import { Eye, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Eye, ChevronLeft, ChevronRight, Loader2, User, Phone, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
   Dialog,
@@ -154,7 +154,7 @@ export default function Pedidos() {
           // Si el término de búsqueda es un número, buscar por ID exacto
           const searchTermStr = searchTerm.trim();
           const isNumericSearch = /^\d+$/.test(searchTermStr);
-          
+
           let results;
           if (isNumericSearch) {
             // Para búsqueda por ID, forzamos búsqueda exacta
@@ -1420,30 +1420,41 @@ export default function Pedidos() {
 
         {/* Detalle del pedido en modal */}
         <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-          <DialogContent className="w-full max-w-6xl sm:max-w-5xl bg-gradient-to-br from-white via-slate-50 to-indigo-50 rounded-lg shadow-lg border border-slate-100">
-            <DialogHeader>
-              <DialogTitle>Detalle del pedido {selectedPedido?.id ?? ''}</DialogTitle>
-              <DialogDescription>
+          <DialogContent className="max-w-6xl h-[90vh] flex flex-col p-0 gap-0 bg-white shadow-2xl overflow-hidden sm:rounded-xl transition-all duration-200">
+            <DialogHeader className="p-5 border-b shrink-0 bg-white z-10 space-y-2">
+              <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                <span>Pedido #{selectedPedido?.id ?? ''}</span>
+                {selectedPedido && (
+                  <Badge variant={estadoColor(selectedPedido.estado) as any} className="text-xs px-2 py-0.5 pointer-events-none">
+                    {selectedPedido.estado}
+                  </Badge>
+                )}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-gray-500 mt-1">
                 {selectedPedido ? (
-                  <div className="text-sm text-muted-foreground">
-                    Cliente: {selectedPedido.nombre_cliente || selectedPedido.cliente_nombre || 'Anónimo'} •
-                    Cédula: {selectedPedido.cedula || selectedPedido.cliente_cedula || '-'} •
-                    Teléfono: {selectedPedido.telefono || selectedPedido.cliente_telefono || '-'} •
-                    Fecha: {selectedPedido.fecha ? format(new Date(selectedPedido.fecha), 'PPpp') : '-'} •
-                    Estado: {selectedPedido.estado || '-'} •
-                    Tasa: {(fmtTasa(selectedPedido) || 0).toFixed(4)}
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 items-center">
+                    <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> {selectedPedido.nombre_cliente || selectedPedido.cliente_nombre || 'Anónimo'}</span>
+                    <span className="hidden sm:inline text-gray-300">|</span>
+                    <span className="flex items-center gap-1"><FileText className="w-3.5 h-3.5" /> {selectedPedido.cedula || selectedPedido.cliente_cedula || '-'}</span>
+                    <span className="hidden sm:inline text-gray-300">|</span>
+                    <span className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> {selectedPedido.telefono || selectedPedido.cliente_telefono || '-'}</span>
+                    <span className="hidden sm:inline text-gray-300">|</span>
+                    <span>Tasa: {(fmtTasa(selectedPedido) || 0).toFixed(4)}</span>
                   </div>
                 ) : (
-                  <div className="text-sm text-muted-foreground">Cargando...</div>
+                  <span>Cargando...</span>
                 )}
               </DialogDescription>
             </DialogHeader>
 
-            <div className="py-2">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-gray-50/50 space-y-6 min-h-0">
               {detailLoading ? (
-                <div>Cargando detalle...</div>
+                <div className="flex items-center justify-center py-20 text-gray-400">
+                  <Loader2 className="w-8 h-8 animate-spin mr-2" />
+                  <span>Cargando detalle...</span>
+                </div>
               ) : selectedPedido ? (
-                <div className={`space-y-4 ${showPaymentInline ? 'hidden' : ''}`}>
+                <div className={`space-y-6 ${showPaymentInline ? 'hidden' : ''}`}>
                   <div className="flex justify-between items-center">
                     <div />
                     <div>
@@ -1530,23 +1541,23 @@ export default function Pedidos() {
                                   // No hay componentes disponibles: mostrar botón para producir
                                   return (
                                     <div className="mt-2 flex items-center gap-2">
-                              <Button size="sm" variant="outline" onClick={() => openProduceModalForLine(it)}>Producir</Button>
-                              {/* Botón eliminar línea (solo si no tiene orden de producción asociada) */}
-                              {(() => {
-                                const hasOrder = Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
-                                const createdFlag = (it?.produccion_creada === true);
-                                const canDelete = !hasOrder && !createdFlag;
-                                return (
-                                  <Button
-                                    size="sm"
-                                    variant="destructive"
-                                    onClick={(e) => { e.stopPropagation(); setDeleteLine(it); setDeleteModalOpen(true); }}
-                                    disabled={!canDelete}
-                                    title={canDelete ? 'Eliminar línea' : 'No se puede eliminar: orden de producción asociada'}
-                                  >Eliminar</Button>
-                                );
-                              })()}
-                            </div>
+                                      <Button size="sm" variant="outline" onClick={() => openProduceModalForLine(it)}>Producir</Button>
+                                      {/* Botón eliminar línea (solo si no tiene orden de producción asociada) */}
+                                      {(() => {
+                                        const hasOrder = Boolean(it?.orden_produccion_id ?? it?.orden_id ?? it?.ordenes_produccion_id ?? it?.produccion_id ?? it?.produccionId);
+                                        const createdFlag = (it?.produccion_creada === true);
+                                        const canDelete = !hasOrder && !createdFlag;
+                                        return (
+                                          <Button
+                                            size="sm"
+                                            variant="destructive"
+                                            onClick={(e) => { e.stopPropagation(); setDeleteLine(it); setDeleteModalOpen(true); }}
+                                            disabled={!canDelete}
+                                            title={canDelete ? 'Eliminar línea' : 'No se puede eliminar: orden de producción asociada'}
+                                          >Eliminar</Button>
+                                        );
+                                      })()}
+                                    </div>
                                   );
                                 })()}
                               </div>
@@ -1849,7 +1860,7 @@ export default function Pedidos() {
                   )}
                 </div>
               ) : (
-                <div>No hay detalle disponible</div>
+                <div className="py-12 text-center text-gray-400">No hay detalle disponible</div>
               )}
             </div>
 
@@ -1974,6 +1985,7 @@ export default function Pedidos() {
             {selectedPedido && showPaymentInline && (
               <div className="mt-4 p-0">
                 <PaymentByBank
+                  embedded={true}
                   pedidoId={selectedPedido?.id ?? 0}
                   onSuccess={async (data: any) => {
                     // Asegurar que actualizamos pagosMap para que el listado muestre 'Pagado'
@@ -1992,7 +2004,7 @@ export default function Pedidos() {
               </div>
             )}
 
-            <DialogFooter>
+            <DialogFooter className="p-4 bg-white border-t shrink-0 z-10 mt-auto w-full">
               <div className="w-full flex flex-col md:flex-row items-center justify-between gap-2">
                 <div className="flex gap-2">
                   <Button size="lg" variant="default" onClick={() => {

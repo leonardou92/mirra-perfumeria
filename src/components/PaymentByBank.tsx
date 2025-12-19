@@ -36,9 +36,10 @@ type Props = {
   pedidoId: number;
   onSuccess?: (data: any) => void;
   onClose?: () => void;
+  embedded?: boolean;
 };
 
-export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
+export default function PaymentByBank({ pedidoId, onSuccess, onClose, embedded = false }: Props) {
   // Guard para evitar crear el mismo pago varias veces desde el cliente
   const inFlightCreates = React.useRef<Set<string>>(new Set());
   const makeClientUid = () => {
@@ -1522,7 +1523,10 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
   }
 
   return (
-    <div className={`relative bg-white rounded-lg shadow-lg w-full max-w-[95vw] lg:max-w-[90vw] z-10 mx-auto px-4 sm:px-6 lg:px-8 max-h-[95vh] flex flex-col overflow-hidden transform transition-all duration-300 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}>
+    <div className={embedded
+      ? "w-full flex flex-col bg-slate-50/50 rounded-lg border border-slate-200"
+      : `relative bg-white rounded-lg shadow-lg w-full max-w-[95vw] lg:max-w-[90vw] z-10 mx-auto px-4 sm:px-6 lg:px-8 max-h-[95vh] flex flex-col overflow-hidden transform transition-all duration-300 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`
+    }>
       <div className="flex justify-between items-start p-4 border-b">
         <div>
           <h3 className="text-lg font-semibold">Registrar pago y completar pedido</h3>
@@ -1557,7 +1561,7 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose }: Props) {
         <button onClick={() => setShowAside(s => !s)} className="text-sm bg-gray-100 px-3 py-1 rounded">{showAside ? 'Ocultar resumen' : 'Mostrar resumen'}</button>
       </div>
 
-      <div className="p-4 sm:p-6 lg:p-8 overflow-auto flex-1">
+      <div className={`${embedded ? 'p-4' : 'p-4 sm:p-6 lg:p-8'} overflow-auto flex-1`}>
         {errors && <div className="mb-3 text-sm text-red-600">{errors}</div>}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
