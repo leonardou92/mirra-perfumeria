@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { getBancos, getFormasPago, completarPedidoVenta, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch, getOrdenProduccionDetailed, completarOrdenProduccion, getAlmacenes } from '../integrations/api';
+import { getBancos, getFormasPago, completarPedidoVenta, completarPedidoAtomico, createPago, getPedidoVenta, getTasaBySimbolo, getTasasCambio, apiFetch, getOrdenProduccionDetailed, completarOrdenProduccion, getAlmacenes } from '../integrations/api';
 // helpers
 const normalizeSymbol = (s: any) => s ? String(s).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
 function extractMonedaFromDetalles(detalles: any) {
@@ -1291,65 +1291,128 @@ export default function PaymentByBank({ pedidoId, onSuccess, onClose, embedded =
           return;
         }
 
-        // Enviar en un solo paso: crear y completar el pedido (backend debe soportar crear+finalizar)
-        // Esto evita duplicados al crear el pago por separado y luego completar.
+        // Enviar en un solo paso usando el endpoint atómico optimizado
+        // Si falla (404), automáticamente hace fallback al proceso legacy
         try {
-          await tryAutoCompleteOrdersForPedido(pedidoId);
-        } catch (errAuto) {
-          console.error('No se pudieron completar órdenes de producción automáticamente', errAuto);
-          toast.error('No se pudieron completar las órdenes de producción asociadas. Revise el servidor.');
-          setLoading(false);
-          return;
-        }
-        try { await createMissingOrdersForPedido(pedidoId); } catch (e) { console.debug(e); }
-        // Optimización: Si acabamos de intentar completar órdenes y crear faltantes,
-        // podemos confiar en que hicimos lo posible. 
-        // No bloqueamos por pedidoHasPendingProduction a menos que sea crítico, 
-        // para evitar latencia de una consulta extra al servidor.
-
-        const data = await completarPedidoVenta(pedidoId, pago);
-        console.log('✅ RESPUESTA DEL BACKEND (completarPedidoVenta):', JSON.stringify(data, null, 2));
-
-        // Verificar asociación del pago de forma más robusta
-        try {
-          const fresh = await getPedidoVenta(pedidoId);
-          console.log('🔍 PEDIDO FRESH (después de completar):', JSON.stringify(fresh, null, 2));
-          // Buscar pagos en múltiples posibles campos
-          const pagosList = Array.isArray(fresh?.pagos) ? fresh.pagos :
-            (Array.isArray(fresh?.pagos_venta) ? fresh.pagos_venta :
-              (Array.isArray(fresh?.payments) ? fresh.payments :
-                (Array.isArray(data?.pedido?.pagos) ? data.pedido.pagos :
-                  (Array.isArray(data?.pago) ? [data.pago] :
-                    (data?.pago ? [data.pago] : [])))));
-
-          console.log('🔍 PAGOS ENCONTRADOS:', pagosList?.length || 0, pagosList);
-
-          // Si el backend reportó éxito y devolvió un pago, lo consideramos válido aun si el "fresh" falla
-          if (pagosList.length === 0 && !data?.pago) {
-            setErrors('Pago registrado pero no se detectó asociación al pedido. Revisa la respuesta del servidor.');
-            toast.error('Pago registrado pero no se detectó asociación al pedido');
-            if (onSuccess) onSuccess(fresh || data);
-            if (onClose) onClose();
-            setLoading(false);
-            return;
+          // Obtener almacén de venta para el endpoint atómico
+          let almacenVentaId: number | null = null;
+          try {
+            const ares: any = await getAlmacenes();
+            const list = Array.isArray(ares) ? ares : (ares?.data || []);
+            const ventaAlm = (list || []).find((a: any) => {
+              if (!a) return false;
+              if (a.es_materia_prima === true) return false;
+              const tipo = String(a.tipo || '').toLowerCase();
+              if (!tipo) return true;
+              return !tipo.includes('materia') && !tipo.includes('materiaprima');
+            });
+            if (ventaAlm && ventaAlm.id) almacenVentaId = Number(ventaAlm.id);
+          } catch (eAlm) {
+            console.warn('No se pudo obtener almacén de venta', eAlm);
           }
-        } catch (e) {
-          console.warn('No se pudo verificar pago tras completar (addAndComplete)', e);
+
+          if (!almacenVentaId) {
+            throw new Error('No se pudo determinar el almacén de venta');
+          }
+
+          // Calcular equivalencia para el pago
+          let equivalencia: number | null = null;
+          try {
+            const m = Number(String(pago.monto || '').replace(',', '.'));
+            const t = pago.tasa ?? (tasa && typeof tasa.monto === 'number' ? Number(tasa.monto) : null);
+            if (Number.isFinite(m) && Number.isFinite(t) && t !== 0) {
+              equivalencia = Number((m / t).toFixed(2));
+            }
+          } catch (e) { /* ignore */ }
+
+          const pagoParaEnviar = {
+            ...pago,
+            equivalencia,
+            moneda: pago.moneda || pago.tasa_simbolo || resolvedMoneda
+          };
+
+          console.log('🚀 Intentando completar pedido con endpoint atómico...');
+          let data: any;
+          try {
+            // INTENTO 1: Usar endpoint atómico optimizado (500ms-2s)
+            data = await completarPedidoAtomico(pedidoId, almacenVentaId, pagoParaEnviar);
+            console.log('✅ RESPUESTA DEL BACKEND (atómico):', JSON.stringify(data, null, 2));
+          } catch (errAtomico: any) {
+            // FALLBACK: Si el endpoint no existe (404) o falla, usar proceso legacy
+            if (errAtomico?.status === 404 || errAtomico?.message?.includes('404')) {
+              console.warn('⚠️ Endpoint atómico no disponible, usando proceso legacy...');
+              toast.info('Usando proceso estándar de completado...');
+
+              // Proceso legacy: completar órdenes + crear pago + completar pedido
+              try {
+                await tryAutoCompleteOrdersForPedido(pedidoId);
+              } catch (errAuto) {
+                console.error('No se pudieron completar órdenes de producción automáticamente', errAuto);
+                toast.error('No se pudieron completar las órdenes de producción asociadas. Revise el servidor.');
+                setLoading(false);
+                return;
+              }
+
+              try {
+                await createMissingOrdersForPedido(pedidoId);
+              } catch (e) {
+                console.debug(e);
+              }
+
+              data = await completarPedidoVenta(pedidoId, pago);
+              console.log('✅ RESPUESTA DEL BACKEND (legacy):', JSON.stringify(data, null, 2));
+            } else {
+              // Si NO es un 404, es un error real del servidor
+              throw errAtomico;
+            }
+          }
+
+          // Verificar asociación del pago de forma más robusta
+          try {
+            const fresh = await getPedidoVenta(pedidoId);
+            console.log('🔍 PEDIDO FRESH (después de completar):', JSON.stringify(fresh, null, 2));
+            // Buscar pagos en múltiples posibles campos
+            const pagosList = Array.isArray(fresh?.pagos) ? fresh.pagos :
+              (Array.isArray(fresh?.pagos_venta) ? fresh.pagos_venta :
+                (Array.isArray(fresh?.payments) ? fresh.payments :
+                  (Array.isArray(data?.pedido?.pagos) ? data.pedido.pagos :
+                    (Array.isArray(data?.pago) ? [data.pago] :
+                      (data?.pago ? [data.pago] : [])))));
+
+            console.log('🔍 PAGOS ENCONTRADOS:', pagosList?.length || 0, pagosList);
+
+            // Si el backend reportó éxito y devolvió un pago, lo consideramos válido aun si el "fresh" falla
+            if (pagosList.length === 0 && !data?.pago) {
+              setErrors('Pago registrado pero no se detectó asociación al pedido. Revisa la respuesta del servidor.');
+              toast.error('Pago registrado pero no se detectó asociación al pedido');
+              if (onSuccess) onSuccess(fresh || data);
+              if (onClose) onClose();
+              setLoading(false);
+              return;
+            }
+          } catch (e) {
+            console.warn('No se pudo verificar pago tras completar (addAndComplete)', e);
+          }
+          if (onSuccess) onSuccess(data);
+          setShowSuccess(true);
+          setTimeout(() => setShowSuccess(false), 1600);
+          toast.success('Pago registrado y pedido completado');
+          if (onClose) onClose();
+          return;
+        } catch (e: any) {
+          throw e;
         }
-        if (onSuccess) onSuccess(data);
-        setShowSuccess(true);
-        setTimeout(() => setShowSuccess(false), 1600);
-        toast.success('Pago registrado y pedido completado');
-        if (onClose) onClose();
-        return;
       } catch (e: any) {
-        throw e;
+        console.error('Error en AddAndComplete', e);
+        setErrors(e?.message ?? 'Error registrando pago');
+        try { toast.error(e?.message || 'Error registrando pago'); } catch (err) { }
+      } finally {
+        setLoading(false);
       }
     } catch (e: any) {
       console.error('Error en AddAndComplete', e);
       setErrors(e?.message ?? 'Error registrando pago');
       try { toast.error(e?.message || 'Error registrando pago'); } catch (err) { }
-    } finally {
       setLoading(false);
     }
   }

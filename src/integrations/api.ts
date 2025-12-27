@@ -161,8 +161,20 @@ export async function deleteProveedor(id: number) {
 }
 
 // Almacenes
+// Cache para evitar llamadas repetidas a /almacenes
+let almacenesCache: any = null;
+let almacenesCacheTime = 0;
+const ALMACENES_CACHE_TTL = 5 * 60 * 1000; // 5 minutos
+
 export async function getAlmacenes() {
-  return apiFetch("/almacenes");
+  const now = Date.now();
+  if (almacenesCache && (now - almacenesCacheTime) < ALMACENES_CACHE_TTL) {
+    return almacenesCache;
+  }
+  const result = await apiFetch("/almacenes");
+  almacenesCache = result;
+  almacenesCacheTime = now;
+  return result;
 }
 export async function getAlmacen(id: number) {
   return apiFetch(`/almacenes/${id}`);
@@ -755,6 +767,67 @@ export async function finalizarPedidoVenta(id: number, pago?: any) {
 // Permite enviar { estado: "Completado", pago: { ... } } para completar y registrar pago
 export async function updatePedidoStatus(id: number, data: { estado: string; pago?: any }) {
   return apiFetch(`/pedidos-venta/${id}/status`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+/**
+ * Completar pedido de forma atómica (optimizado)
+ * Endpoint: POST /api/pedidos-venta/:id/completar-todo-atomico
+ * 
+ * Este endpoint ejecuta todas las operaciones en una sola transacción:
+ * - Completa todas las órdenes de producción del pedido
+ * - Registra el pago
+ * - Marca el pedido como completado
+ * 
+ * Tiempo esperado: 500ms-2s (vs. 8-15s del proceso legacy)
+ * 
+ * @param id - ID del pedido
+ * @param almacen_venta_id - ID del almacén de venta
+ * @param pago - Datos del pago a registrar
+ * @returns Respuesta del servidor con pedido, órdenes completadas y pago
+ */
+export async function completarPedidoAtomico(
+  id: number,
+  almacen_venta_id: number,
+  pago: {
+    forma_pago_id: number;
+    banco_id: number;
+    monto: number;
+    referencia?: string;
+    fecha_transaccion?: string;
+    tasa?: number;
+    tasa_simbolo?: string;
+    tasa_monto?: number;
+    moneda?: string;
+    equivalencia?: number;
+  }
+) {
+  const startTime = Date.now();
+
+  try {
+    console.log('🚀 [ATOMICO] Iniciando completar pedido atomico:', id);
+
+    const payload = {
+      almacen_venta_id,
+      pago: {
+        ...pago,
+        fecha_transaccion: pago.fecha_transaccion || new Date().toISOString(),
+      }
+    };
+
+    const result = await apiFetch(`/pedidos-venta/${id}/completar-todo-atomico`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+
+    const elapsedTime = Date.now() - startTime;
+    console.log(`✅ [ATOMICO] Pedido completado en ${elapsedTime}ms`);
+
+    return result;
+  } catch (error: any) {
+    const elapsedTime = Date.now() - startTime;
+    console.error(`❌ [ATOMICO] Error después de ${elapsedTime}ms:`, error);
+    throw error;
+  }
 }
 
 // Cancelar un pedido de venta: POST /api/pedidos-venta/:id/cancelar

@@ -592,7 +592,7 @@ export default function Pedidos() {
       // Preferir endpoint específico para crear orden desde línea de pedido si disponemos de pedido y línea
       if (selectedPedido?.id && prodLine?.id) {
         try {
-          createdResp = await apiFetch(`/pedidos-venta/${selectedPedido.id}/lineas/${prodLine.id}/ordenes-produccion`, { method: 'POST' });
+          createdResp = await apiFetch(`/pedidos-venta/${selectedPedido.id}/lineas/${prodLine.id}/ordenes-produccion`, { method: 'POST', body: JSON.stringify(payload) });
           creationPath = 'line';
         } catch (errLine: any) {
           // Intentar interpretar errores esperados del backend
@@ -633,6 +633,27 @@ export default function Pedidos() {
       }
 
       toast.success('Producción creada');
+
+      // Intentar forzar la actualización de los componentes si se enviaron personalizados.
+      // Esto corrige el caso donde el endpoint de creación ignora el body de componentes.
+      try {
+        let createdId: number | null = null;
+        if (creationPath === 'line') {
+          const o = createdResp?.orden_produccion ?? createdResp?.orden ?? createdResp?.orden_produccion ?? null;
+          createdId = Number(o?.id ?? o?.orden_id ?? null) || null;
+        } else {
+          createdId = Number(createdResp?.id ?? createdResp?.orden_id ?? createdResp?.orden?.id ?? null) || null;
+        }
+
+        if (createdId && payload.componentes && Array.isArray(payload.componentes) && payload.componentes.length > 0) {
+          console.debug('Force-updating components for Order', createdId, payload.componentes);
+          // Enviamos PUT para asegurar que los componentes sean los editados
+          await apiFetch(`/ordenes-produccion/${createdId}`, { method: 'PUT', body: JSON.stringify({ componentes: payload.componentes }) });
+        }
+      } catch (eUpdate) {
+        console.warn('No se pudieron actualizar los componentes de la orden creada', eUpdate);
+      }
+
       // extraer id de la respuesta en varias formas posibles y actualizar UI según la ruta usada
       try {
         // Si la creación fue por endpoint de línea, el backend puede devolver { orden_produccion, linea_actualizada }
