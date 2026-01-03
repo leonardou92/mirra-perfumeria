@@ -82,7 +82,11 @@ export default function ProductModal({ product, open, initialTamano, onClose, on
                   onError={(e) => { 
                     const target = e.currentTarget as HTMLImageElement; 
                     target.onerror = null; 
-                    target.src = getImageUrl(undefined) as string; 
+                    // Usar una imagen aleatoria del asset folder como fallback
+                    const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+                    const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
+                    target.src = randomFallback; 
+                    console.error('[ProductModal] image load failed, using fallback:', target.src); 
                   }}
                 />
               </div>

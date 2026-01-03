@@ -6,11 +6,20 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 // Devuelve la mejor URL de imagen disponible en un objeto producto/interno
-export function getImageUrl(obj?: any): string | undefined {
-  if (!obj) return undefined;
-  const PLACEHOLDER = '/placeholder-product.jpg';
+export function getImageUrl(obj?: any, fallbackIndex?: number): string | undefined {
+  if (!obj) {
+    // Si no hay objeto, devolver una imagen aleatoria del asset folder
+    const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+    const index = fallbackIndex !== undefined ? fallbackIndex : Math.floor(Math.random() * fallbackImages.length);
+    return fallbackImages[index];
+  }
   const raw = obj.imagen_url ?? obj.image_url ?? obj.image ?? obj.imagen;
-  if (!raw) return PLACEHOLDER;
+  if (!raw) {
+    // Si no hay URL de imagen, devolver una imagen aleatoria del asset folder
+    const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+    const index = fallbackIndex !== undefined ? fallbackIndex : Math.floor(Math.random() * fallbackImages.length);
+    return fallbackImages[index];
+  }
 
   // Si ya es una URL absoluta o data/blob, devolver tal cual
   if (/^(https?:)?\/\//i.test(raw) || /^data:|^blob:/i.test(raw)) return raw;

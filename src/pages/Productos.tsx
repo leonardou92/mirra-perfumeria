@@ -745,7 +745,15 @@ export default function Productos() {
                             src={getImageUrl(product) ?? ''}
                             alt={product.nombre ?? 'imagen producto'}
                             className="w-full h-full object-cover"
-                            onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/placeholder.png'; }}
+                            onError={(e) => { 
+                              const t = e.currentTarget as HTMLImageElement; 
+                              t.onerror = null; 
+                              // Usar una imagen aleatoria del asset folder como fallback
+                              const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+                              const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
+                              t.src = randomFallback; 
+                              console.error('[Productos] image load failed, using fallback:', t.src); 
+                            }}
                           />
                         </div>
                       </TableCell>

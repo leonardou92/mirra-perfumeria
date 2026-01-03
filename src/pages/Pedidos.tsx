@@ -1500,7 +1500,15 @@ export default function Pedidos() {
                           <tr key={it.id} className="border-t">
                             <td className="py-2 w-16">
                               <div className="w-12 h-12 rounded overflow-hidden bg-gray-100">
-                                <img src={getImageUrl(it)} alt={it.producto_nombre || ''} className="w-full h-full object-cover" onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; }} />
+                                <img src={getImageUrl(it)} alt={it.producto_nombre || ''} className="w-full h-full object-cover" onError={(e) => { 
+                                const t = e.currentTarget as HTMLImageElement; 
+                                t.onerror = null; 
+                                // Usar una imagen aleatoria del asset folder como fallback
+                                const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+                                const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
+                                t.src = randomFallback; 
+                                console.error('[Pedidos] image load failed, using fallback:', t.src); 
+                              }} />
                               </div>
                             </td>
                             <td className="py-2 align-top">

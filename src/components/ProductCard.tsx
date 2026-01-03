@@ -74,7 +74,15 @@ export function ProductCard({ product, onAddToCart, openModalOnAdd = false, show
               src={getImageUrl(product)}
               alt={product.name}
               loading="lazy"
-              onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; console.error('[ProductCard] image load failed:', t.src); }}
+              onError={(e) => { 
+                const t = e.currentTarget as HTMLImageElement; 
+                t.onerror = null; 
+                // Usar una imagen aleatoria del asset folder como fallback
+                const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+                const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
+                t.src = randomFallback; 
+                console.error('[ProductCard] image load failed, using fallback:', t.src); 
+              }}
               className="w-full h-full object-cover bg-neutral-100 transform group-hover:scale-105 transition-transform duration-700"
             />
           </button>

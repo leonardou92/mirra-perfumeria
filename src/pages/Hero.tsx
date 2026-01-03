@@ -311,7 +311,15 @@ export default function Hero() {
                               src={getImageUrl(it.product)}
                               alt={it.product.name}
                               className="w-full h-full object-cover mix-blend-multiply group-hover:scale-105 transition-transform duration-500"
-                              onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; t.src = getImageUrl(undefined) as string; }}
+                              onError={(e) => { 
+                                const t = e.currentTarget as HTMLImageElement; 
+                                t.onerror = null; 
+                                // Usar una imagen aleatoria del asset folder como fallback
+                                const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+                                const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
+                                t.src = randomFallback; 
+                                console.error('[Hero Cart] image load failed, using fallback:', t.src); 
+                              }}
                             />
                           </div>
 
