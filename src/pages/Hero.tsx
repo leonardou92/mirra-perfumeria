@@ -156,7 +156,7 @@ export default function Hero() {
       <section className="relative z-10 px-4 sm:px-6 pt-24 sm:pt-24">
         <div className="max-w-7xl mx-auto pb-12 sm:pb-20 md:pb-28 text-center">
           <div className="inline-block px-3 sm:px-4 py-1.5 sm:py-2 mb-3 sm:mb-4 bg-primary-50 text-primary-700 text-xs sm:text-sm font-medium rounded-full border border-primary-100">
-            Colección 2025
+            Colección 2026
           </div>
           <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-gray-900 font-bell-mt leading-tight mb-4 sm:mb-6">
             Descubre la Esencia de la <span className="text-primary-600">Elegancia</span>
@@ -221,24 +221,122 @@ export default function Hero() {
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row items-center justify-between mt-6 sm:mt-8 gap-4">
-          <div className="text-xs sm:text-sm text-copper-600 text-center sm:text-left">
+        <div className="flex flex-col items-center justify-center mt-6 sm:mt-8 gap-4">
+          {/* Info text */}
+          <div className="text-xs sm:text-sm text-copper-600 text-center">
             {total !== null ? `Mostrando página ${page} de ${Math.max(1, Math.ceil((total || 0) / perPage))} — ${total} productos` : ''}
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Pagination controls */}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {/* Jump to first page */}
             <button
-              className="px-3 py-1.5 sm:py-1 text-sm rounded-md border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed font-medium"
+              onClick={() => setPage(1)}
+              disabled={page === 1}
+              title="Ir a la primera página"
+            >
+              ⏮ Primera
+            </button>
+
+            {/* Previous page */}
+            <button
+              className="px-3 sm:px-4 py-1.5 text-xs sm:text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed font-medium"
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
             >
-              Anterior
+              ← Anterior
             </button>
+
+            {/* Page numbers */}
+            {(() => {
+              const totalPages = Math.max(1, Math.ceil((total || 0) / perPage));
+              const maxVisiblePages = 7; // Show 7 page numbers at a time
+              let startPage = Math.max(1, page - Math.floor(maxVisiblePages / 2));
+              let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+              // Adjust start if we're near the end
+              if (endPage - startPage < maxVisiblePages - 1) {
+                startPage = Math.max(1, endPage - maxVisiblePages + 1);
+              }
+
+              const pageNumbers = [];
+
+              // First page + ellipsis
+              if (startPage > 1) {
+                pageNumbers.push(
+                  <button
+                    key={1}
+                    onClick={() => setPage(1)}
+                    className="hidden sm:flex w-8 h-8 items-center justify-center text-xs sm:text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    1
+                  </button>
+                );
+                if (startPage > 2) {
+                  pageNumbers.push(
+                    <span key="ellipsis-start" className="hidden sm:inline px-2 text-gray-400">...</span>
+                  );
+                }
+              }
+
+              // Page number buttons
+              for (let i = startPage; i <= endPage; i++) {
+                pageNumbers.push(
+                  <button
+                    key={i}
+                    onClick={() => setPage(i)}
+                    className={`w-8 h-8 flex items-center justify-center text-xs sm:text-sm rounded-md border transition-all font-medium ${i === page
+                      ? 'bg-gradient-to-r from-primary-500 to-amber-600 text-white border-primary-600 shadow-md scale-110'
+                      : 'border-gray-300 bg-white hover:bg-gray-50 hover:border-primary-300'
+                      }`}
+                  >
+                    {i}
+                  </button>
+                );
+              }
+
+              // Ellipsis + last page
+              if (endPage < totalPages) {
+                if (endPage < totalPages - 1) {
+                  pageNumbers.push(
+                    <span key="ellipsis-end" className="hidden sm:inline px-2 text-gray-400">...</span>
+                  );
+                }
+                pageNumbers.push(
+                  <button
+                    key={totalPages}
+                    onClick={() => setPage(totalPages)}
+                    className="hidden sm:flex w-8 h-8 items-center justify-center text-xs sm:text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50 transition-colors font-medium"
+                  >
+                    {totalPages}
+                  </button>
+                );
+              }
+
+              return pageNumbers;
+            })()}
+
+            {/* Next page */}
             <button
-              className="px-3 py-1.5 sm:py-1 text-sm rounded-md border border-gray-300 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              className="px-3 sm:px-4 py-1.5 text-xs sm:text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed font-medium"
               onClick={() => setPage((p) => p + 1)}
               disabled={total !== null && page >= Math.max(1, Math.ceil((total || 0) / perPage))}
             >
-              Siguiente
+              Siguiente →
+            </button>
+
+            {/* Jump to last page */}
+            <button
+              className="px-2 sm:px-3 py-1.5 text-xs sm:text-sm rounded-md border border-gray-300 bg-white hover:bg-gray-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed font-medium"
+              onClick={() => {
+                const totalPages = Math.max(1, Math.ceil((total || 0) / perPage));
+                setPage(totalPages);
+              }}
+              disabled={total !== null && page >= Math.max(1, Math.ceil((total || 0) / perPage))}
+              title="Ir a la última página"
+            >
+              Última ⏭
             </button>
           </div>
         </div>
@@ -311,14 +409,14 @@ export default function Hero() {
                               src={getImageUrl(it.product)}
                               alt={it.product.name}
                               className="w-full h-full object-cover mix-blend-multiply group-hover:scale-105 transition-transform duration-500"
-                              onError={(e) => { 
-                                const t = e.currentTarget as HTMLImageElement; 
-                                t.onerror = null; 
+                              onError={(e) => {
+                                const t = e.currentTarget as HTMLImageElement;
+                                t.onerror = null;
                                 // Usar una imagen aleatoria del asset folder como fallback
                                 const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
                                 const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
-                                t.src = randomFallback; 
-                                console.error('[Hero Cart] image load failed, using fallback:', t.src); 
+                                t.src = randomFallback;
+                                console.error('[Hero Cart] image load failed, using fallback:', t.src);
                               }}
                             />
                           </div>
