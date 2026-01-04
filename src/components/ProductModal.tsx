@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Product } from '@/lib/types';
 import { getImageUrl } from '@/lib/utils';
 import { X, ShoppingCart, Info, Check } from 'lucide-react';
@@ -30,8 +31,8 @@ export default function ProductModal({ product, open, initialTamano, onClose, on
         console.error('Error cargando tasa de cambio:', e);
       }
     })();
-    return () => { 
-      mounted = false; 
+    return () => {
+      mounted = false;
     };
   }, []);
 
@@ -54,19 +55,38 @@ export default function ProductModal({ product, open, initialTamano, onClose, on
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
-      <div className="relative bg-white rounded-none sm:rounded-lg shadow-lg max-w-5xl w-full h-full sm:h-auto sm:max-h-[90vh] z-10 overflow-hidden flex flex-col">
-        <div className="flex justify-between items-center p-3 sm:p-4 border-b sticky top-0 bg-white z-10">
-          <h3 className="text-lg font-semibold line-clamp-1 text-gray-900">{product.name}</h3>
-          <button 
-            onClick={onClose} 
-            className="p-1.5 -mr-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
+      <div className="relative bg-white w-full h-[100dvh] sm:h-auto sm:max-h-[90vh] sm:w-full sm:max-w-5xl rounded-none sm:rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden">
+        {/* Mobile Floating Buttons - Fijos sobre el contenido (overlay) */}
+
+
+        <div className="sm:hidden absolute top-3 right-3 z-50">
+          <button
+            onClick={onClose}
+            className="p-2.5 bg-white/90 backdrop-blur-md border border-gray-100 shadow-md rounded-full text-gray-700 hover:text-red-500 hover:bg-white active:scale-95 transition-all"
             aria-label="Cerrar"
           >
             <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Desktop Header - Visible solo a partir de sm */}
+        <div className="hidden sm:flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white z-20 shrink-0 shadow-sm gap-2 min-h-[56px]">
+          <div className="flex-1 min-w-0">
+            <h3 className="text-lg font-bold text-gray-900 truncate">
+              {product.name}
+            </h3>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-2 text-gray-500 hover:text-red-600 bg-gray-50 hover:bg-red-50 border border-transparent hover:border-red-100 rounded-full transition-all shrink-0 active:scale-90"
+            aria-label="Cerrar"
+          >
+            <X className="w-6 h-6" />
           </button>
         </div>
 
@@ -79,20 +99,20 @@ export default function ProductModal({ product, open, initialTamano, onClose, on
                   src={getImageUrl(product)}
                   alt={product.name}
                   className="max-w-full max-h-full w-auto h-auto object-contain transition-all duration-300 hover:scale-105"
-                  onError={(e) => { 
-                    const target = e.currentTarget as HTMLImageElement; 
-                    target.onerror = null; 
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    target.onerror = null;
                     // Usar una imagen aleatoria del asset folder como fallback
                     const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
                     const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
-                    target.src = randomFallback; 
-                    console.error('[ProductModal] image load failed, using fallback:', target.src); 
+                    target.src = randomFallback;
+                    console.error('[ProductModal] image load failed, using fallback:', target.src);
                   }}
                 />
               </div>
             </div>
           </div>
-          
+
           {/* Contenido del lado derecho */}
           <div className="flex flex-col">
             <div className="space-y-4">
@@ -106,54 +126,54 @@ export default function ProductModal({ product, open, initialTamano, onClose, on
               </div>
               <div className="mb-2">
                 <h4 className="text-2xl sm:text-3xl font-bold text-copper-600">
-                    {(() => {
-                      const pm = getPrecioMostrar(product, selectedTamano ?? undefined);
-                      if (pm.precio != null && Number(pm.precio) > 0) {
-                        return tasa && tasa.monto ? `${tasa.simbolo || 'USD'} ${(Number(pm.precio) * Number(tasa.monto)).toFixed(2)}` : `$${Number(pm.precio).toLocaleString('es-AR')}`;
-                      }
-                      return 'Consultar precio';
-                    })()}
-                  </h4>
-
-                  {/* Selector de tamaños */}
                   {(() => {
-                    const variantes = Array.isArray(product?.tamanos) && product.tamanos.length > 0
-                      ? product.tamanos
-                      : (Array.isArray((product as any)?.formulas) ? (product as any).formulas : []);
-                    if (!Array.isArray(variantes) || variantes.length === 0) return null;
-                    const display = [...variantes].sort((a: any, b: any) => {
-                      const pa = a && (a.precio_calculado ?? a.precio_venta ?? null) != null ? Number(a.precio_calculado ?? a.precio_venta) : Number.POSITIVE_INFINITY;
-                      const pb = b && (b.precio_calculado ?? b.precio_venta ?? null) != null ? Number(b.precio_calculado ?? b.precio_venta) : Number.POSITIVE_INFINITY;
-                      return pa - pb; // menor -> mayor
-                    });
-                    return (
-                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {display.map((t: any) => {
-                          const active = selectedTamano && Number(selectedTamano.id) === Number(t.id);
-                          return (
-                            <button
-                              key={t.id}
-                              onClick={() => setSelectedTamano(t)}
-                              className={`px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm inline-flex items-center justify-between gap-2 w-full border transition-all duration-150 ${active ? 'bg-gradient-to-r from-copper-700/95 to-copper-800 text-cream-50 shadow-lg scale-[1.02] ring-1 ring-copper-200 border-copper-700' : 'bg-cream-50 text-copper-700 border-gray-100 hover:shadow-sm hover:scale-[1.02]'}`}
-                              aria-pressed={active}
-                            >
-                              <div className="text-left">
-                                <div className="font-medium">{t.nombre}</div>
-                                <div className="text-xs text-muted-foreground">{t.cantidad ? `${t.cantidad}${t.unidad || ''}` : ''}</div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {active ? <Check className="w-4 h-4 text-cream-50" /> : null}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    );
+                    const pm = getPrecioMostrar(product, selectedTamano ?? undefined);
+                    if (pm.precio != null && Number(pm.precio) > 0) {
+                      return tasa && tasa.monto ? `${tasa.simbolo || 'USD'} ${(Number(pm.precio) * Number(tasa.monto)).toFixed(2)}` : `$${Number(pm.precio).toLocaleString('es-AR')}`;
+                    }
+                    return 'Consultar precio';
                   })()}
-                </div>
+                </h4>
+
+                {/* Selector de tamaños */}
+                {(() => {
+                  const variantes = Array.isArray(product?.tamanos) && product.tamanos.length > 0
+                    ? product.tamanos
+                    : (Array.isArray((product as any)?.formulas) ? (product as any).formulas : []);
+                  if (!Array.isArray(variantes) || variantes.length === 0) return null;
+                  const display = [...variantes].sort((a: any, b: any) => {
+                    const pa = a && (a.precio_calculado ?? a.precio_venta ?? null) != null ? Number(a.precio_calculado ?? a.precio_venta) : Number.POSITIVE_INFINITY;
+                    const pb = b && (b.precio_calculado ?? b.precio_venta ?? null) != null ? Number(b.precio_calculado ?? b.precio_venta) : Number.POSITIVE_INFINITY;
+                    return pa - pb; // menor -> mayor
+                  });
+                  return (
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {display.map((t: any) => {
+                        const active = selectedTamano && Number(selectedTamano.id) === Number(t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            onClick={() => setSelectedTamano(t)}
+                            className={`px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm inline-flex items-center justify-between gap-2 w-full border transition-all duration-150 ${active ? 'bg-gradient-to-r from-copper-700/95 to-copper-800 text-cream-50 shadow-lg scale-[1.02] ring-1 ring-copper-200 border-copper-700' : 'bg-cream-50 text-copper-700 border-gray-100 hover:shadow-sm hover:scale-[1.02]'}`}
+                            aria-pressed={active}
+                          >
+                            <div className="text-left">
+                              <div className="font-medium">{t.nombre}</div>
+                              <div className="text-xs text-muted-foreground">{t.cantidad ? `${t.cantidad}${t.unidad || ''}` : ''}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {active ? <Check className="w-4 h-4 text-cream-50" /> : null}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
-              
-              {/* Sección de detalles del producto comentada temporalmente
+            </div>
+
+            {/* Sección de detalles del producto comentada temporalmente
               <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 mt-6">
                 <div className="flex items-center gap-2 mb-3 text-gray-800">
                   <Info className="h-5 w-5 text-copper-600" />
@@ -168,7 +188,7 @@ export default function ProductModal({ product, open, initialTamano, onClose, on
                 )}
               </div>
               */}
-            
+
             {/* Sección de acciones fijas en la parte inferior */}
             <div className={`mt-6 pt-4 border-t ${window.innerWidth >= 768 ? '' : 'sticky bottom-0 bg-white pb-1'}`}>
               <div className="space-y-3">
@@ -197,10 +217,10 @@ export default function ProductModal({ product, open, initialTamano, onClose, on
                   )}
                 </div>
 
-                <Button 
+                <Button
                   size="lg"
                   className="w-full py-3 text-base font-semibold bg-amber-500 text-black hover:bg-amber-600 transition-all duration-200 hover:shadow-md shadow-sm"
-                  onClick={() => { 
+                  onClick={() => {
                     const pm = getPrecioMostrar(product, selectedTamano ?? undefined);
                     const item = { ...product, tamano: selectedTamano ?? undefined, precio_snapshot: pm.precio ?? undefined };
                     onAddToCart(item as any);
@@ -216,6 +236,7 @@ export default function ProductModal({ product, open, initialTamano, onClose, on
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
