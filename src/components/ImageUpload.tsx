@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Loader2, UploadCloud, X as XIcon, Camera } from 'lucide-react';
 import { toast } from 'sonner';
+import { uploadImage as uploadImageToAPI } from '@/integrations/api';
 
 interface ImageUploadProps {
   onImageUpload: (url: string) => void;
@@ -10,9 +11,6 @@ interface ImageUploadProps {
 }
 
 export default function ImageUpload({ onImageUpload, existingImageUrl, originalImageUrl }: ImageUploadProps) {
-  const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
-  const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
-
   const [previewUrl, setPreviewUrl] = useState<string>(existingImageUrl || '');
   const [error, setError] = useState<string>('');
   const [isUploading, setIsUploading] = useState<boolean>(false);
@@ -22,19 +20,6 @@ export default function ImageUpload({ onImageUpload, existingImageUrl, originalI
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Log environment variables (helpful in dev)
-  useEffect(() => {
-    // keep this minimal and dev-only
-    if (typeof window !== 'undefined' && import.meta.env.MODE !== 'production') {
-      // eslint-disable-next-line no-console
-      console.log('Cloudinary Config:', {
-        env: {
-          VITE_CLOUDINARY_CLOUD_NAME: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME,
-          VITE_CLOUDINARY_UPLOAD_PRESET: import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET,
-        }
-      });
-    }
-  }, []);
 
   // Sync when parent tells us there's an existing image (e.g., opening the edit modal)
   useEffect(() => {
@@ -62,69 +47,45 @@ export default function ImageUpload({ onImageUpload, existingImageUrl, originalI
 
     setError('');
     setPreviewUrl(URL.createObjectURL(file));
-    await uploadImage(file);
+    await handleImageUpload(file);
   };
 
-  const uploadImage = async (file: File) => {
-    if (!CLOUD_NAME || !UPLOAD_PRESET) {
-      const errorMsg = 'Error de configuración: faltan credenciales de Cloudinary';
-      // eslint-disable-next-line no-console
-      console.error(errorMsg, { CLOUD_NAME, UPLOAD_PRESET });
-      setError(errorMsg);
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('upload_preset', UPLOAD_PRESET);
-    formData.append('cloud_name', CLOUD_NAME);
-    formData.append('folder', 'aroma-zenith/products');
-
+  const handleImageUpload = async (file: File) => {
     try {
       setIsUploading(true);
       setUploadProgress(0);
       setUploadSuccess(false);
 
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/upload`);
-
-        xhr.upload.onprogress = (ev) => {
-          if (ev.lengthComputable) {
-            const p = Math.round((ev.loaded / ev.total) * 100);
-            setUploadProgress(p);
+      // Simulate progress for better UX since we can't track real progress with fetch
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (prev === null) return 10;
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return 90;
           }
-        };
+          return prev + 10;
+        });
+      }, 100);
 
-        xhr.onload = () => {
-          try {
-            const responseData = JSON.parse(xhr.responseText);
-            if (xhr.status >= 200 && xhr.status < 300) {
-              const secureUrl = responseData.secure_url as string;
-              setPreviewUrl(secureUrl);
-              onImageUpload(secureUrl);
-              setUploadSuccess(true);
-              toast.success('Imagen subida correctamente');
-              resolve();
-            } else {
-              const msg = responseData?.error?.message || responseData?.message || 'Error al subir la imagen';
-              reject(new Error(msg));
-            }
-          } catch (e) {
-            reject(e as Error);
-          }
-        };
-
-        xhr.onerror = () => reject(new Error('Error de red al subir la imagen'));
-        xhr.onabort = () => reject(new Error('Subida abortada'));
-
-        xhr.send(formData);
-      });
+      const response = await uploadImageToAPI(file);
+      
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      
+      if (response.ok && response.url) {
+        setPreviewUrl(response.url);
+        onImageUpload(response.url);
+        setUploadSuccess(true);
+        toast.success('Imagen subida correctamente');
+      } else {
+        throw new Error(response.error || 'Error al subir la imagen');
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Error uploading image:', err);
       const errorMessage = err instanceof Error ? err.message : 'Error desconocido al subir la imagen';
-      setError(`Error: ${errorMessage}. Por favor, verifica tus credenciales de Cloudinary.`);
+      setError(`Error: ${errorMessage}`);
       setPreviewUrl('');
       toast.error(errorMessage);
     } finally {
@@ -241,9 +202,6 @@ export default function ImageUpload({ onImageUpload, existingImageUrl, originalI
 
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
 
-      {!CLOUD_NAME || !UPLOAD_PRESET ? (
-        <p className="text-sm text-red-600">Advertencia: Las credenciales de Cloudinary no están configuradas correctamente.</p>
-      ) : null}
     </div>
   );
 }

@@ -1078,6 +1078,31 @@ async function apiFetch(endpoint: string, options: RequestInit = {}) {
   return res.json();
 }
 
+// Image upload to MinIO/S3
+export async function uploadImage(file: File) {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const token = getToken();
+  const headers: HeadersInit = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_URL}/images/upload`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(errorText || 'Error al subir la imagen');
+  }
+
+  return res.json();
+}
+
 export { apiFetch, API_URL, getToken };
 export async function login(email: string, password: string) {
   const res = await fetch(`${API_URL}/auth/login`, {
