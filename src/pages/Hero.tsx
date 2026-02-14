@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import Header from '@/components/Header';
 import ProductCard from '@/components/ProductCard';
 import { getCatalogoPaginated, getCachedTasaActiva, createPedidoVentaPublic } from '@/integrations/api';
@@ -21,6 +21,7 @@ export default function Hero() {
   const [perPage] = useState(12);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState<number | null>(null);
+  const { categorySlug } = useParams();
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
   const [isCartOpen, setIsCartOpen] = useState(false);
@@ -39,7 +40,7 @@ export default function Hero() {
   useEffect(() => {
     let mounted = true;
     setLoading(true);
-    (async () => {
+    const load = async () => {
       try {
         // Fetch all products from backend (ignoring limit/offset since backend doesn't paginate)
         const res = await getCatalogoPaginated({});
@@ -83,9 +84,22 @@ export default function Hero() {
           : productsList;
 
         // Apply category filter if needed
-        const categoryFiltered = selectedCategory === 'all'
+        const activeSlug = categorySlug || (selectedCategory === 'all' ? null : selectedCategory);
+
+        const categoryFiltered = !activeSlug || activeSlug === 'all'
           ? filtered
-          : filtered.filter((p) => (p.category || '').toLowerCase() === selectedCategory.toLowerCase());
+          : filtered.filter((p) => {
+            // Generate slug for product category to compare
+            const catName = p.category || '';
+            // Try to find raw category object if available to check for explicit slug
+            const catObj = p.categoria_obj;
+            const rawSlug = catObj?.slug;
+
+            const generatedSlug = (catName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+
+            // Check matching against raw slug or generated slug
+            return (rawSlug && rawSlug === activeSlug) || generatedSlug === activeSlug;
+          });
 
         // Store full filtered list
         setFullProducts(categoryFiltered);
@@ -108,9 +122,10 @@ export default function Hero() {
       } finally {
         if (mounted) setLoading(false);
       }
-    })();
+    };
+    load();
     return () => { mounted = false; };
-  }, [page, perPage, search, selectedCategory]);
+  }, [page, perPage, search, selectedCategory, categorySlug]);
 
   // Obtener tasa pública cacheada para mostrar precios convertidos en el carrito público
   useEffect(() => {
@@ -190,9 +205,13 @@ export default function Hero() {
 
       <div id="catalog" className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12 relative z-10">
         <div className="text-center mb-8 sm:mb-12 px-2">
-          <h2 className="text-2xl sm:text-3xl font-bell-mt font-bold text-gray-800 mb-2 sm:mb-3">Nuestros Productos</h2>
+          <h2 className="text-2xl sm:text-3xl font-bell-mt font-bold text-gray-800 mb-2 sm:mb-3">
+            {categorySlug ? `Categoría: ${categorySlug.charAt(0).toUpperCase() + categorySlug.slice(1).replace(/-/g, ' ')}` : 'Nuestros Productos'}
+          </h2>
           <div className="w-20 sm:w-24 h-0.5 sm:h-1 bg-gradient-to-r from-primary-500 to-amber-500 mx-auto rounded-full mb-4 sm:mb-6"></div>
-          <p className="text-gray-600 text-sm sm:text-base max-w-2xl mx-auto">Descubre nuestra exclusiva colección de fragancias que capturan la esencia de la elegancia y el lujo.</p>
+          <p className="text-gray-600 text-sm sm:text-base max-w-2xl mx-auto">
+            {categorySlug ? `Explora nuestra selección de ${categorySlug.replace(/-/g, ' ')}` : 'Descubre nuestra exclusiva colección de fragancias que capturan la esencia de la elegancia y el lujo.'}
+          </p>
         </div>
         <div className="mb-8 sm:mb-12 flex flex-col md:flex-row md:items-center md:justify-between gap-4 sm:gap-6 bg-white/50 backdrop-blur-sm p-4 sm:p-6 rounded-xl sm:rounded-2xl shadow-sm border border-gray-100">
           <div className="w-full md:w-2/3">
@@ -236,7 +255,7 @@ export default function Hero() {
               disabled={page === 1}
               title="Ir a la primera página"
             >
-              ⏮ Primera
+              ⏮ Inicio
             </button>
 
             {/* Previous page */}
