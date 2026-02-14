@@ -12,6 +12,24 @@ RUN npm ci
 # Copiar el resto del código
 COPY . .
 
+# Declarar argumentos de build para variables de entorno
+ARG VITE_API_URL
+ARG VITE_MINIO_ENDPOINT
+ARG VITE_MINIO_BUCKET
+ARG VITE_CLOUDINARY_CLOUD_NAME
+ARG VITE_CLOUDINARY_UPLOAD_PRESET
+
+# Exportar como variables de entorno para el build
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_MINIO_ENDPOINT=$VITE_MINIO_ENDPOINT
+ENV VITE_MINIO_BUCKET=$VITE_MINIO_BUCKET
+ENV VITE_CLOUDINARY_CLOUD_NAME=$VITE_CLOUDINARY_CLOUD_NAME
+ENV VITE_CLOUDINARY_UPLOAD_PRESET=$VITE_CLOUDINARY_UPLOAD_PRESET
+
+# Verificar variables de entorno (debug)
+COPY check-env.sh ./
+RUN chmod +x check-env.sh && ./check-env.sh
+
 # Build de la aplicación
 RUN npm run build
 
