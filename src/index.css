@@ -16,7 +16,7 @@
 }
 
 .announcement-marquee {
-  animation: announcement-scroll 18s linear infinite;
+  animation: announcement-scroll 26s linear infinite;
 }
 
 @keyframes announcement-single-scroll {
