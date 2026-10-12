@@ -11,11 +11,21 @@
 [data-sidebar="content"] { scrollbar-width: none; -ms-overflow-style: none; }
 
 @keyframes announcement-scroll {
-  to { transform: translateX(-50%); }
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
 }
 
 .announcement-marquee {
-  animation: announcement-scroll 32s linear infinite;
+  animation: announcement-scroll 18s linear infinite;
+}
+
+@keyframes announcement-single-scroll {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100vw); }
+}
+
+.announcement-marquee--single {
+  animation: announcement-single-scroll 12s linear infinite;
 }
 
 .announcement-marquee:hover,
