@@ -1258,6 +1258,35 @@ async function apiFetch(endpoint: string, options: RequestInit = {}) {
   return res.json();
 }
 
+export interface CintilloMensaje {
+  id: number;
+  texto: string;
+  orden: number;
+  activo: boolean;
+}
+
+export async function getMensajesCintilloActivos(): Promise<CintilloMensaje[]> {
+  const response = await fetch(`${API_URL}/cintillo/activos`);
+  if (!response.ok) throw new Error('No se pudieron cargar los mensajes del cintillo');
+  return response.json();
+}
+
+export async function getMensajesCintillo(): Promise<CintilloMensaje[]> {
+  return apiFetch('/cintillo');
+}
+
+export async function createMensajeCintillo(data: Pick<CintilloMensaje, 'texto' | 'orden' | 'activo'>) {
+  return apiFetch('/cintillo', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateMensajeCintillo(id: number, data: Pick<CintilloMensaje, 'texto' | 'orden' | 'activo'>) {
+  return apiFetch(`/cintillo/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function deleteMensajeCintillo(id: number) {
+  return apiFetch(`/cintillo/${id}`, { method: 'DELETE' });
+}
+
 // Image upload to MinIO/S3
 export async function uploadImage(file: File) {
   const formData = new FormData();

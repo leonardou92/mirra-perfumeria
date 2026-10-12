@@ -239,7 +239,7 @@ export default function Hero() {
 
       <Header cartItemsCount={count} cartPulseKey={cartPulseKey} onCartClick={() => setIsCartOpen(true)} />
 
-      <section className="relative z-10 px-4 sm:px-6 pt-24 sm:pt-24">
+      <section className="relative z-10 px-4 sm:px-6 pt-32 sm:pt-32">
         <div className="max-w-7xl mx-auto pb-12 sm:pb-20 md:pb-28 text-center">
           <div className="inline-block px-3 sm:px-4 py-1.5 sm:py-2 mb-3 sm:mb-4 bg-primary-50 text-primary-700 text-xs sm:text-sm font-medium rounded-full border border-primary-100 uppercase tracking-wide">
             {selectedCategory === 'all'

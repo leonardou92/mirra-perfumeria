@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ShoppingCart, Menu, X } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
-import { getCatalogoPaginated } from '@/integrations/api';
+import { getCatalogoPaginated, getMensajesCintilloActivos, type CintilloMensaje } from '@/integrations/api';
 
 interface HeaderProps {
   cartItemsCount: number;
@@ -12,7 +12,18 @@ interface HeaderProps {
 export function Header({ cartItemsCount, cartPulseKey, onCartClick }: HeaderProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [announcementMessages, setAnnouncementMessages] = useState<CintilloMensaje[]>([]);
   const location = useLocation();
+
+  useEffect(() => {
+    let mounted = true;
+    getMensajesCintilloActivos()
+      .then((messages) => {
+        if (mounted) setAnnouncementMessages(Array.isArray(messages) ? messages : []);
+      })
+      .catch((error) => console.error('Error cargando mensajes del cintillo', error));
+    return () => { mounted = false; };
+  }, []);
 
   // Cerrar menú al cambiar de ruta
   useEffect(() => {
@@ -89,6 +100,27 @@ export function Header({ cartItemsCount, cartPulseKey, onCartClick }: HeaderProp
       className={`fixed w-full top-0 left-0 z-50 bg-gradient-to-r from-[#707070]/90 via-[#878787]/90 to-[#a0a0a0]/90 backdrop-blur-sm shadow-lg transition-all duration-300 ${scrolled ? 'py-1' : 'py-0'
         }`}
     >
+      {announcementMessages.length > 0 && <div
+        className="h-8 overflow-hidden border-b border-[#ca9e67]/25 bg-[#352b27] text-white"
+        role="region"
+        aria-label="Novedades de Mirra Perfumería"
+      >
+        <div className="announcement-marquee flex h-full w-max items-center">
+          {[0, 1].map((copy) => (
+            <div
+              key={copy}
+              className="flex shrink-0 items-center gap-8 px-4"
+              aria-hidden={copy === 1}
+            >
+              {announcementMessages.map((message) => (
+                <span key={message.id} className="flex items-center gap-2 whitespace-nowrap font-montserrat text-[10px] font-semibold uppercase tracking-wider sm:text-xs">
+                  {message.texto}
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16 md:h-20">
           {/* Logo y nombre */}

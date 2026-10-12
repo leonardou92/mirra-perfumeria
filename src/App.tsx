@@ -22,6 +22,7 @@ import AboutUs from "./pages/AboutUs";
 import Almacenes from "./pages/Almacenes";
 import Categorias from "./pages/Categorias";
 import WhatsappAdmin from "./pages/WhatsappAdmin";
+import CintilloMensajes from "./pages/CintilloMensajes";
 import Reportes from "./pages/Reportes";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -92,6 +93,7 @@ const App = () => (
 
             <Route element={<ModuleProtectedRoute moduleKey="usuarios" />}>
               <Route path="/admin/whatsapp" element={<WhatsappAdmin />} />
+              <Route path="/admin/cintillo" element={<CintilloMensajes />} />
             </Route>
 
             <Route element={<ModuleProtectedRoute moduleKey="marcas" />}>
