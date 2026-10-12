@@ -101,7 +101,7 @@ export function Header({ cartItemsCount, cartPulseKey, onCartClick }: HeaderProp
         }`}
     >
       {announcementMessages.length > 0 && <div
-        className="h-8 overflow-hidden border-b border-[#ca9e67]/25 bg-[#352b27] text-white"
+        className="h-8 overflow-hidden border-b border-primary-200 bg-primary-100 text-primary-900"
         role="region"
         aria-label="Novedades de Mirra Perfumería"
       >
