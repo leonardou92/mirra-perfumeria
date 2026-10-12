@@ -11,8 +11,8 @@
 [data-sidebar="content"] { scrollbar-width: none; -ms-overflow-style: none; }
 
 @keyframes announcement-scroll {
-  from { transform: translateX(-50%); }
-  to { transform: translateX(0); }
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
 }
 
 .announcement-marquee {
@@ -20,8 +20,8 @@
 }
 
 @keyframes announcement-single-scroll {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(100vw); }
+  from { transform: translateX(100vw); }
+  to { transform: translateX(-100%); }
 }
 
 .announcement-marquee--single {
