@@ -7,6 +7,7 @@ import {
   getClientesTopResumen,
   getFormulas,
   getOrdenesProduccionResumen,
+  getOrdenesProduccionResumenPorMateria,
   getPedidos,
   getPedidosResumenReportes,
   getProductos,
@@ -227,15 +228,11 @@ export default function Reportes() {
     const run = async () => {
       setLoadingInfo({ active: true, progress: 0, message: 'Cargando historial de producción...', etaSeconds: 0 });
       try {
-        const [resProd, resCats, resProdList] = await Promise.all([
-          getOrdenesProduccionResumen(prodFechaInicio || undefined, prodFechaFin || undefined),
-          getCategorias(),
-          getProductos(),
+        const [resProd] = await Promise.all([
+          getOrdenesProduccionResumenPorMateria(prodFechaInicio || undefined, prodFechaFin || undefined),
         ]);
         if (cancelled) return;
         setProduccionResumen(Array.isArray(resProd) ? resProd : (resProd?.data || []));
-        setCategorias(Array.isArray(resCats) ? resCats : (resCats?.data || []));
-        setProductos(Array.isArray(resProdList) ? resProdList : (resProdList?.data || []));
       } catch (error) {
         if (!cancelled) setProduccionResumen([]);
       } finally {
@@ -375,7 +372,7 @@ export default function Reportes() {
     const monthlySales: Record<string, number> = {};
     const productSales: Record<string, { nombre: string; cantidad: number; monto: number }> = {};
     const presentationSales: Record<string, { presentacion: string; cantidad: number; monto: number; precioPromedio: number }> = {};
-    const productBehavior: Record<string, { baseName: string; pedidos: number; cantidad: number; precios: number[]; nombres: Set<string>; presentaciones: Set<string> }> = {};
+    const productBehavior: Record<string, { baseName: string; pedidos: number; cantidad: number; precios: number[]; nombres: Set<string>; presentaciones: Set<string>; presentacionCantidades: Record<string, number> }> = {};
     const customerSales: Record<string, { nombre: string; pedidos: number; monto: number }> = {};
     const presentationReportRows = (Array.isArray(presentaciones) ? presentaciones : []).map((item: any) => {
       const label = String(item?.presentacion_ml ?? item?.presentacion ?? 'Sin presentación (ml)');
@@ -478,12 +475,14 @@ export default function Reportes() {
         presentationSales[presentacion] = pCurrent;
 
         const bKey = Number.isFinite(productoIdNum) ? `id:${productoIdNum}` : `name:${baseName}`;
-        const bCurrent = productBehavior[bKey] || { baseName, pedidos: 0, cantidad: 0, precios: [], nombres: new Set<string>(), presentaciones: new Set<string>() };
+        const bCurrent = productBehavior[bKey] || { baseName, pedidos: 0, cantidad: 0, precios: [], nombres: new Set<string>(), presentaciones: new Set<string>(), presentacionCantidades: {} };
         bCurrent.pedidos += 1;
         bCurrent.cantidad += qty;
         if (price > 0) bCurrent.precios.push(price);
         bCurrent.nombres.add(nombre);
         bCurrent.presentaciones.add(presentacion);
+        const desgloseKey = String(item?.formula_nombre || nombre);
+        bCurrent.presentacionCantidades[desgloseKey] = (bCurrent.presentacionCantidades[desgloseKey] || 0) + qty;
         productBehavior[bKey] = bCurrent;
       }
 
@@ -562,6 +561,8 @@ export default function Reportes() {
         const precioMin = it.precios.length > 0 ? Math.min(...it.precios) : 0;
         const precioMax = it.precios.length > 0 ? Math.max(...it.precios) : 0;
         const precioProm = it.precios.length > 0 ? it.precios.reduce((a, n) => a + n, 0) / it.precios.length : 0;
+      const desglose = Object.entries(it.presentacionCantidades)
+        .sort((a, b) => b[1] - a[1]);
       return {
         nombreBase: it.baseName,
         cantidad: it.cantidad,
@@ -571,6 +572,7 @@ export default function Reportes() {
           precioProm,
           presentaciones: Array.from(it.presentaciones),
           nombres: Array.from(it.nombres),
+          desglose,
         };
       });
 
@@ -704,7 +706,13 @@ export default function Reportes() {
     type RotStatus = 'activo' | 'lento' | 'sin_movimiento' | 'muerto' | 'nunca';
     const STATUS_ORDER: Record<RotStatus, number> = { nunca: 0, muerto: 1, sin_movimiento: 2, lento: 3, activo: 4 };
 
-    const rows = productos.map((p: any) => {
+    // Solo productos terminados: aquellos que aparecen como producto_terminado_id en alguna fórmula
+    const productosTerminadosIds = new Set(
+      formulasAll.map((f: any) => String(f?.producto_terminado_id ?? '')).filter(Boolean)
+    );
+    const productosTerminados = productos.filter((p: any) => productosTerminadosIds.has(String(p.id)));
+
+    const rows = productosTerminados.map((p: any) => {
       const lastSale = lastSaleByProductId[String(p.id)] ?? null;
       const daysSince = lastSale ? Math.floor((today.getTime() - lastSale.getTime()) / 86_400_000) : null;
       let status: RotStatus;
@@ -907,12 +915,22 @@ export default function Reportes() {
               {metrics.topProductosPorCantidad.map((item: any, index: number) => (
                 <div key={`cant-${item.nombreBase}-${index}`} className="rounded-md border p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <span>{index + 1}. {item.nombreBase}</span>
-                    <span>{item.cantidad} uds</span>
+                    <span className="font-medium">{index + 1}. {item.nombreBase}</span>
+                    <span className="font-semibold tabular-nums">{item.cantidad} uds</span>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Aparece en {item.pedidos} pedidos | Precio prom: ${item.precioProm.toFixed(2)}
                   </p>
+                  {item.desglose && item.desglose.length > 0 && (
+                    <ul className="mt-2 space-y-0.5 pl-3 border-l-2 border-muted">
+                      {item.desglose.map(([nombre, qty]: [string, number]) => (
+                        <li key={nombre} className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>{nombre}</span>
+                          <span className="tabular-nums">{qty} uds</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               ))}
               {metrics.topProductosPorCantidad.length === 0 && <p className="text-sm text-muted-foreground">Sin datos de ventas.</p>}
@@ -925,12 +943,22 @@ export default function Reportes() {
               {metrics.topProductosPorApariciones.map((item: any, index: number) => (
                 <div key={`ped-${item.nombreBase}-${index}`} className="rounded-md border p-3">
                   <div className="flex items-center justify-between gap-3">
-                    <span>{index + 1}. {item.nombreBase}</span>
-                    <span>{item.pedidos} pedidos</span>
+                    <span className="font-medium">{index + 1}. {item.nombreBase}</span>
+                    <span className="font-semibold tabular-nums">{item.pedidos} pedidos</span>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Cantidad vendida: {item.cantidad} uds | Precio prom: ${item.precioProm.toFixed(2)}
                   </p>
+                  {item.desglose && item.desglose.length > 0 && (
+                    <ul className="mt-2 space-y-0.5 pl-3 border-l-2 border-muted">
+                      {item.desglose.map(([nombre, qty]: [string, number]) => (
+                        <li key={nombre} className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>{nombre}</span>
+                          <span className="tabular-nums">{qty} uds</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               ))}
               {metrics.topProductosPorApariciones.length === 0 && <p className="text-sm text-muted-foreground">Sin datos de ventas.</p>}
@@ -1157,13 +1185,6 @@ export default function Reportes() {
                     <div className="flex items-center gap-2 shrink-0">
                       <div className="text-xs text-muted-foreground text-right">
                         <div>Stock: <strong>{row.stock.toLocaleString('es-VE')}{row.unidad ? ` ${row.unidad}` : ''}</strong></div>
-                        {row.esenciaGramosTotal !== null && (
-                          <div className="text-[11px] text-amber-700 dark:text-amber-400 font-medium">
-                            {row.esenciaGramosTotal >= 1000
-                              ? `${(row.esenciaGramosTotal / 1000).toFixed(2)} kg esencia`
-                              : `${row.esenciaGramosTotal} g esencia`}
-                          </div>
-                        )}
                       </div>
                       <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_COLORS[row.status]}`}>
                         {STATUS_LABEL[row.status]}
@@ -1184,43 +1205,22 @@ export default function Reportes() {
     }
 
     if (selectedReport === 'historial-produccion') {
-      const productosMap: Record<string, { nombre: string; categoriaId: string }> = {};
-      for (const p of productos) {
-        if (p?.id != null) productosMap[String(p.id)] = { nombre: String(p.nombre ?? p.id), categoriaId: String(p.categoria_id ?? '') };
-      }
-      const categoriasMap: Record<string, string> = {};
-      for (const c of categorias) {
-        if (c?.id != null) categoriasMap[String(c.id)] = String(c.nombre ?? c.name ?? c.id);
-      }
-      const today = new Date();
-
-      // Enrich produccionResumen with categoria
       const enriched = produccionResumen.map((pr: any) => {
-        const pid = String(pr.producto_terminado_id ?? '');
-        const pm = productosMap[pid];
-        const nombre = pr.producto_nombre || pm?.nombre || `Producto #${pid}`;
-        const categoriaId = pm?.categoriaId ?? '';
-        const categoriaNombre = categoriasMap[categoriaId] ?? null;
+        const mid = String(pr.materia_prima_id ?? '');
+        const nombre = pr.materia_nombre || `Esencia #${mid}`;
         const rawDate = pr.ultima_produccion;
         const ultimaFecha = rawDate ? new Date(rawDate) : null;
         const validDate = ultimaFecha && !isNaN(ultimaFecha.getTime()) ? ultimaFecha : null;
-        return { pid, nombre, categoriaId, categoriaNombre, veces: Number(pr.veces_producido ?? 0), cantidadTotal: Number(pr.cantidad_total_producida ?? 0), ultimaFecha: validDate };
+        const gramos = Number(pr.cantidad_total_gramos ?? 0);
+        return { mid, nombre, veces: Number(pr.veces_producido ?? 0), gramos, ultimaFecha: validDate };
       });
 
-      // Categories present
-      const categoriasEnProd = Array.from(
-        new Map(enriched.filter((r) => r.categoriaId).map((r) => [r.categoriaId, r.categoriaNombre ?? r.categoriaId])).entries()
-      ).map(([id, nombre]) => ({ id, nombre: String(nombre) })).sort((a, b) => a.nombre.localeCompare(b.nombre));
-
-      // Filter
       const searchLow = prodSearch.toLowerCase();
       let filtered = enriched.filter((r) => {
         if (searchLow && !r.nombre.toLowerCase().includes(searchLow)) return false;
-        if (prodCategoria && r.categoriaId !== prodCategoria) return false;
         return true;
       });
 
-      // Sort
       filtered = [...filtered].sort((a, b) => {
         if (prodOrden === 'nombre') return a.nombre.localeCompare(b.nombre);
         if (prodOrden === 'reciente') {
@@ -1229,15 +1229,15 @@ export default function Reportes() {
           if (!b.ultimaFecha) return -1;
           return b.ultimaFecha.getTime() - a.ultimaFecha.getTime();
         }
-        return b.veces - a.veces;
+        return b.gramos - a.gramos;
       });
 
       return (
         <div className="space-y-4">
           <Card>
             <CardHeader className="border-b border-border/60 pb-4 space-y-3">
-              <CardTitle className="text-base font-medium">Historial de producción por producto</CardTitle>
-              <p className="text-xs text-muted-foreground">Órdenes completadas — cuántas veces se añadió esencia a cada producto terminado</p>
+              <CardTitle className="text-base font-medium">Historial de producción por esencia</CardTitle>
+              <p className="text-xs text-muted-foreground">Órdenes completadas — cuántos gramos de cada ESC. INSP. se utilizaron en producción</p>
 
               {/* Rango de fechas */}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -1261,32 +1261,21 @@ export default function Reportes() {
                 </div>
               </div>
 
-
-              {/* Búsqueda + Categoría + Orden */}
+              {/* Búsqueda + Orden */}
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input
                   type="text"
-                  placeholder="Buscar producto..."
+                  placeholder="Buscar esencia..."
                   value={prodSearch}
                   onChange={(e) => setProdSearch(e.target.value)}
                   className="flex-1 h-10 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
                 <select
-                  value={prodCategoria}
-                  onChange={(e) => setProdCategoria(e.target.value)}
-                  className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-44"
-                >
-                  <option value="">Todas las categorías</option>
-                  {categoriasEnProd.map((c) => (
-                    <option key={c.id} value={c.id}>{c.nombre}</option>
-                  ))}
-                </select>
-                <select
                   value={prodOrden}
                   onChange={(e) => setProdOrden(e.target.value as 'veces' | 'reciente' | 'nombre')}
                   className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-44"
                 >
-                  <option value="veces">Más producidos</option>
+                  <option value="veces">Mayor uso (g)</option>
                   <option value="reciente">Más recientes</option>
                   <option value="nombre">Nombre A–Z</option>
                 </select>
@@ -1300,21 +1289,21 @@ export default function Reportes() {
                 const ultimaStr = r.ultimaFecha
                   ? r.ultimaFecha.toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
                   : null;
+                const gramosLabel = r.gramos >= 1000
+                  ? `${(r.gramos / 1000).toFixed(2)} kg`
+                  : `${r.gramos.toLocaleString('es-VE')} g`;
                 return (
-                  <div key={r.pid} className="flex flex-col gap-1 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div key={r.mid} className="flex flex-col gap-1 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
                       <p className="font-medium text-sm leading-tight truncate">{r.nombre}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {r.categoriaNombre && <span className="mr-1.5">{r.categoriaNombre} ·</span>}
                         {ultimaStr ? `Última producción: ${ultimaStr}` : 'Sin fecha registrada'}
+                        {' · '}{r.veces} {r.veces === 1 ? 'orden' : 'órdenes'}
                       </p>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0 text-right">
-                      <div className="text-xs text-muted-foreground">
-                        <div>Total producido: <strong>{r.cantidadTotal.toLocaleString('es-VE')}</strong></div>
-                      </div>
-                      <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 whitespace-nowrap">
-                        {r.veces} {r.veces === 1 ? 'vez' : 'veces'}
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
+                        {gramosLabel} usados
                       </span>
                     </div>
                   </div>
@@ -1322,7 +1311,7 @@ export default function Reportes() {
               })}
               {filtered.length > 0 && (
                 <p className="text-xs text-muted-foreground pt-2">
-                  Mostrando {filtered.length} de {enriched.length} productos con historial de producción.
+                  Mostrando {filtered.length} de {enriched.length} esencias con historial de producción.
                 </p>
               )}
             </CardContent>

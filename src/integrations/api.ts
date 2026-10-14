@@ -1,3 +1,8 @@
+// --- Dashboard ---
+export async function getDashboardStats() {
+  return apiFetch("/dashboard/stats");
+}
+
 // --- Servicios para entidades ---
 
 // Productos
@@ -304,6 +309,15 @@ export async function updateFormulasByLike(q: string, precio_venta: number) {
   });
 }
 
+// Activar o inactivar fórmulas en masa por coincidencia parcial de nombre (PATCH /api/formulas/by-like/set-active)
+export async function setActiveFormulasByLike(q: string, activo: boolean) {
+  if (!q || String(q).trim() === '') throw new Error('q requerido');
+  return apiFetch(`/formulas/by-like/set-active`, {
+    method: 'PATCH',
+    body: JSON.stringify({ q: String(q).trim(), activo }),
+  });
+}
+
 // Tamaños (formats / tamaños de venta)
 // Nota: el endpoint `/api/tamanos` fue removido en el backend y los "tamaños"
 // ahora se modelan como `formulas`. Para mantener compatibilidad con las
@@ -398,6 +412,16 @@ export async function getOrdenesProduccionResumen(desde?: string, hasta?: string
   if (hasta) ps.set('hasta', hasta);
   const qs = ps.toString() ? `?${ps.toString()}` : '';
   return apiFetch(`/ordenes-produccion/resumen-por-producto${qs}`);
+}
+
+// Resumen de producciones por materia prima (esencia): cuántos gramos se usaron.
+// Responde: [{ materia_prima_id, materia_nombre, veces_producido, cantidad_total_gramos, ultima_produccion }]
+export async function getOrdenesProduccionResumenPorMateria(desde?: string, hasta?: string) {
+  const ps = new URLSearchParams();
+  if (desde) ps.set('desde', desde);
+  if (hasta) ps.set('hasta', hasta);
+  const qs = ps.toString() ? `?${ps.toString()}` : '';
+  return apiFetch(`/ordenes-produccion/resumen-por-materia${qs}`);
 }
 
 // Historial de movimientos de inventario (kardex).

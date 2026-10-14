@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { CardGridSkeleton } from '@/components/admin-skeletons';
 import { Layout } from "@/components/Layout";
-import { getFormulas, createFormula, getProductos, getFormula, updateFormula, deleteFormula, getAlmacenes, getProducto, createProduccion, searchFormulasByLike, updateFormulasByLike } from "@/integrations/api";
+import { getFormulas, createFormula, getProductos, getFormula, updateFormula, deleteFormula, getAlmacenes, getProducto, createProduccion, searchFormulasByLike, updateFormulasByLike, setActiveFormulasByLike } from "@/integrations/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { parseApiError } from '@/lib/utils';
 import { Combobox } from "@/components/ui/combobox";
-import { Search, Plus, Trash2, Loader2, DollarSign, ChevronRight } from 'lucide-react';
+import { Search, Plus, Trash2, Loader2, DollarSign, ChevronRight, PowerOff } from 'lucide-react';
 
 export default function Formulas() {
   const [formulas, setFormulas] = useState<any[]>([]);
@@ -29,6 +29,7 @@ export default function Formulas() {
   const [computedCosto, setComputedCosto] = useState<number>(0);
   const [precioVenta, setPrecioVenta] = useState<number>(0);
   // Nota: ya no manejamos tamaños aquí; las presentaciones/tamaños ahora son fórmulas.
+  const [formulaActivo, setFormulaActivo] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState(false);
   // Producción modal
   const [produceOpen, setProduceOpen] = useState(false);
@@ -39,6 +40,16 @@ export default function Formulas() {
   const [produceAvailability, setProduceAvailability] = useState<Array<{ materia_prima_id: number; nombre?: string; disponible: number; requerido: number }>>([]);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [debouncedQuery, setDebouncedQuery] = useState<string>('');
+
+  // Bulk activate/deactivate modal state
+  const [bulkDeactivateOpen, setBulkDeactivateOpen] = useState(false);
+  const [bulkDeactivateQuery, setBulkDeactivateQuery] = useState('');
+  const [bulkDeactivateResults, setBulkDeactivateResults] = useState<any[]>([]);
+  const [bulkDeactivateSearched, setBulkDeactivateSearched] = useState(false);
+  const [bulkDeactivateSearching, setBulkDeactivateSearching] = useState(false);
+  const [bulkDeactivating, setBulkDeactivating] = useState(false);
+  const [bulkDeactivateStep, setBulkDeactivateStep] = useState<'search' | 'confirm'>('search');
+  const [bulkDeactivateAction, setBulkDeactivateAction] = useState<'activate' | 'deactivate'>('deactivate');
 
   // Bulk price update modal state
   const [bulkPriceOpen, setBulkPriceOpen] = useState(false);
@@ -215,6 +226,7 @@ export default function Formulas() {
     setEditingId(null);
     setCosto(0);
     setPrecioVenta(0);
+    setFormulaActivo(true);
   }
 
   async function handleCreate() {
@@ -241,6 +253,7 @@ export default function Formulas() {
       // incluir costo y precio_venta si están calculados o el usuario los editó
       if (costo !== null && costo !== undefined) payload.costo = Number(costo);
       if (precioVenta !== null && precioVenta !== undefined) payload.precio_venta = Number(precioVenta);
+      if (editingId) payload.activo = formulaActivo;
       if (editingId) {
         await updateFormula(editingId, payload);
         toast.success('Fórmula actualizada');
@@ -290,6 +303,7 @@ export default function Formulas() {
       // prefill costo and precio if present; otherwise they'll be calculated by effect
       setCosto(f.costo !== undefined && f.costo !== null ? Number(f.costo) : 0);
       setPrecioVenta(f.precio_venta !== undefined && f.precio_venta !== null ? Number(f.precio_venta) : 0);
+      setFormulaActivo(f.activo !== false);
       // Prefill form
       setProductoTerminadoId(f.producto_terminado_id ?? null);
 
@@ -569,6 +583,52 @@ export default function Formulas() {
     setBulkNewPrice('');
   }
 
+  // --- Bulk deactivate handlers ---
+  async function handleBulkDeactivateSearch() {
+    if (!bulkDeactivateQuery.trim()) return toast.error('Ingrese un término de búsqueda (ej: 30ml)');
+    setBulkDeactivateSearching(true);
+    setBulkDeactivateSearched(false);
+    try {
+      const res: any = await searchFormulasByLike(bulkDeactivateQuery);
+      const data = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []);
+      setBulkDeactivateResults(data);
+      setBulkDeactivateSearched(true);
+    } catch (err: any) {
+      console.error('Error buscando fórmulas by-like', err);
+      toast.error(parseApiError(err) || 'Error al buscar fórmulas');
+    } finally {
+      setBulkDeactivateSearching(false);
+    }
+  }
+
+  async function handleBulkDeactivate() {
+    if (!bulkDeactivateQuery.trim()) return toast.error('q requerido');
+    setBulkDeactivating(true);
+    const activar = bulkDeactivateAction === 'activate';
+    try {
+      const res: any = await setActiveFormulasByLike(bulkDeactivateQuery, activar);
+      toast.success(`Se ${activar ? 'activaron' : 'inactivaron'} ${res?.updated_count ?? 0} fórmulas`);
+      const fres: any = await getFormulas(page);
+      const data = Array.isArray(fres) ? fres : (fres?.data ?? []);
+      await enrichAndSetFormulas(data);
+      setBulkDeactivateOpen(false);
+      resetBulkDeactivateModal();
+    } catch (err: any) {
+      console.error('Error cambiando estado de fórmulas en masa', err);
+      toast.error(parseApiError(err) || 'Error al cambiar estado de fórmulas');
+    } finally {
+      setBulkDeactivating(false);
+    }
+  }
+
+  function resetBulkDeactivateModal() {
+    setBulkDeactivateStep('search');
+    setBulkDeactivateQuery('');
+    setBulkDeactivateResults([]);
+    setBulkDeactivateSearched(false);
+    setBulkDeactivateAction('deactivate');
+  }
+
 
   return (
     <Layout>
@@ -579,6 +639,14 @@ export default function Formulas() {
             <p className="text-sm text-muted-foreground">Gestión de fórmulas y producción</p>
           </div>
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => { resetBulkDeactivateModal(); setBulkDeactivateOpen(true); }}
+              className="h-11 px-4 gap-2"
+            >
+              <PowerOff className="h-4 w-4" />
+              Activar / Inactivar
+            </Button>
             <Button
               variant="outline"
               onClick={() => { resetBulkModal(); setBulkPriceOpen(true); }}
@@ -618,9 +686,14 @@ export default function Formulas() {
                 paginatedFormulas.map((f) => (
                   <Card key={f.id} className="overflow-hidden">
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-lg">
-                        {f.nombre || f.titulo || `Fórmula #${f.id}`}
-                      </CardTitle>
+                      <div className="flex items-start justify-between gap-2">
+                        <CardTitle className="text-lg">
+                          {f.nombre || f.titulo || `Fórmula #${f.id}`}
+                        </CardTitle>
+                        <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${f.activo === false ? 'bg-gray-100 text-gray-500' : 'bg-green-100 text-green-700'}`}>
+                          {f.activo === false ? 'Inactiva' : 'Activa'}
+                        </span>
+                      </div>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex flex-wrap gap-2 mb-3">
@@ -900,6 +973,25 @@ export default function Formulas() {
               </div>
             </div>
 
+            {editingId && (
+              <div className="flex items-center justify-between px-1 py-3 border-t">
+                <div>
+                  <p className="text-sm font-medium">Estado de la fórmula</p>
+                  <p className="text-xs text-muted-foreground">Las fórmulas inactivas no aparecen en el catálogo</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setFormulaActivo((v) => !v)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${formulaActivo ? 'bg-green-500' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${formulaActivo ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+                <span className={`ml-2 text-sm font-medium ${formulaActivo ? 'text-green-700' : 'text-muted-foreground'}`}>
+                  {formulaActivo ? 'Activa' : 'Inactiva'}
+                </span>
+              </div>
+            )}
+
             <DialogFooter className="pt-4 border-t">
               <Button
                 variant="outline"
@@ -972,6 +1064,248 @@ export default function Formulas() {
             ) : (
               <div className="p-4">Cargando...</div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Bulk deactivate dialog */}
+        <Dialog open={bulkDeactivateOpen} onOpenChange={(open) => { setBulkDeactivateOpen(open); if (!open) resetBulkDeactivateModal(); }}>
+          <DialogContent className="w-full h-[100dvh] rounded-none sm:rounded-lg sm:h-auto sm:max-h-[90vh] overflow-y-auto sm:w-[95vw] sm:max-w-3xl">
+            <DialogHeader className="pb-2">
+              <DialogTitle className="text-xl font-semibold flex items-center gap-2">
+                <PowerOff className="h-5 w-5 text-primary" />
+                Activar / Inactivar Fórmulas en Masa
+              </DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                Busca fórmulas por nombre (ej: "30ml", "60ml") y activa o inactiva todas las que coincidan.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-5 py-4">
+              {/* Step indicator */}
+              <div className="flex items-center gap-3 text-sm">
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-colors ${bulkDeactivateStep === 'search'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground'
+                  }`}>
+                  <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold">1</span>
+                  Buscar
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-muted-foreground" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                </svg>
+                <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full font-medium transition-colors ${bulkDeactivateStep === 'confirm'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-muted text-muted-foreground'
+                  }`}>
+                  <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-xs font-bold">2</span>
+                  Confirmar
+                </div>
+              </div>
+
+              {/* Step 1: Search */}
+              {bulkDeactivateStep === 'search' && (
+                <div className="space-y-4">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        type="text"
+                        placeholder='Ej: "30ml", "60ml", "100ml"...'
+                        value={bulkDeactivateQuery}
+                        onChange={(e) => { setBulkDeactivateQuery(e.target.value); setBulkDeactivateSearched(false); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleBulkDeactivateSearch(); }}
+                        className="pl-10 h-11 text-base"
+                      />
+                      <svg
+                        className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400"
+                        xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"
+                      >
+                        <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <Button onClick={handleBulkDeactivateSearch} disabled={bulkDeactivateSearching || !bulkDeactivateQuery.trim()} className="gap-2">
+                      {bulkDeactivateSearching ? (
+                        <>
+                          <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Buscando...
+                        </>
+                      ) : 'Buscar'}
+                    </Button>
+                  </div>
+
+                  {bulkDeactivateSearched && (
+                    <div className="border rounded-lg overflow-hidden">
+                      {bulkDeactivateResults.length === 0 ? (
+                        <div className="p-8 text-center text-muted-foreground">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mx-auto mb-2 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                          No se encontraron fórmulas que contengan <strong>"{bulkDeactivateQuery}"</strong>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="bg-muted/50 px-4 py-2.5 border-b flex items-center justify-between">
+                            <span className="text-sm font-medium">
+                              Se encontraron <strong className="text-primary">{bulkDeactivateResults.length}</strong> fórmula{bulkDeactivateResults.length !== 1 ? 's' : ''} que coinciden con <strong>"{bulkDeactivateQuery}"</strong>
+                            </span>
+                          </div>
+                          <div className="max-h-[300px] overflow-y-auto">
+                            <table className="w-full text-sm">
+                              <thead className="bg-muted/30 sticky top-0">
+                                <tr>
+                                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">#</th>
+                                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Nombre</th>
+                                  <th className="text-right px-4 py-2 font-medium text-muted-foreground">Estado actual</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {bulkDeactivateResults.map((f: any, idx: number) => (
+                                  <tr key={f.id || idx} className="hover:bg-muted/20 transition-colors">
+                                    <td className="px-4 py-2 text-muted-foreground">{idx + 1}</td>
+                                    <td className="px-4 py-2 font-medium">{f.nombre || f.titulo || `Fórmula #${f.id}`}</td>
+                                    <td className="px-4 py-2 text-right">
+                                      {f.activo === false
+                                        ? <span className="text-muted-foreground">Inactiva</span>
+                                        : <span className="font-semibold text-green-700">Activa</span>
+                                      }
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 2: Choose action and confirm */}
+              {bulkDeactivateStep === 'confirm' && (
+                <div className="space-y-4">
+                  {/* Action selector */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Acción a realizar</label>
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setBulkDeactivateAction('activate')}
+                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 text-sm font-medium transition-colors ${
+                          bulkDeactivateAction === 'activate'
+                            ? 'border-green-500 bg-green-50 text-green-700'
+                            : 'border-border bg-background text-muted-foreground hover:border-green-300'
+                        }`}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                        Activar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBulkDeactivateAction('deactivate')}
+                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border-2 text-sm font-medium transition-colors ${
+                          bulkDeactivateAction === 'deactivate'
+                            ? 'border-red-500 bg-red-50 text-red-700'
+                            : 'border-border bg-background text-muted-foreground hover:border-red-300'
+                        }`}
+                      >
+                        <PowerOff className="h-4 w-4" />
+                        Inactivar
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={`border rounded-lg p-4 ${bulkDeactivateAction === 'activate' ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                    <div className="flex items-start gap-3">
+                      <svg xmlns="http://www.w3.org/2000/svg" className={`h-5 w-5 mt-0.5 flex-shrink-0 ${bulkDeactivateAction === 'activate' ? 'text-green-600' : 'text-red-600'}`} viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      <div>
+                        <p className={`font-medium ${bulkDeactivateAction === 'activate' ? 'text-green-800' : 'text-red-800'}`}>Confirmar acción</p>
+                        <p className={`text-sm mt-1 ${bulkDeactivateAction === 'activate' ? 'text-green-700' : 'text-red-700'}`}>
+                          Estás a punto de <strong>{bulkDeactivateAction === 'activate' ? 'activar' : 'inactivar'}</strong> <strong>{bulkDeactivateResults.length}</strong> fórmula{bulkDeactivateResults.length !== 1 ? 's' : ''} que
+                          contienen <strong>"{bulkDeactivateQuery}"</strong> en su nombre.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <details className="border rounded-lg">
+                    <summary className="px-4 py-2.5 cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
+                      Ver fórmulas afectadas ({bulkDeactivateResults.length})
+                    </summary>
+                    <div className="max-h-[200px] overflow-y-auto border-t">
+                      <table className="w-full text-sm">
+                        <thead className="bg-muted/30 sticky top-0">
+                          <tr>
+                            <th className="text-left px-4 py-1.5 font-medium text-muted-foreground">Nombre</th>
+                            <th className="text-right px-4 py-1.5 font-medium text-muted-foreground">Nuevo Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {bulkDeactivateResults.map((f: any, idx: number) => (
+                            <tr key={f.id || idx}>
+                              <td className="px-4 py-1.5">{f.nombre || `Fórmula #${f.id}`}</td>
+                              <td className={`px-4 py-1.5 text-right font-semibold ${bulkDeactivateAction === 'activate' ? 'text-green-700' : 'text-red-600'}`}>
+                                {bulkDeactivateAction === 'activate' ? 'Activa' : 'Inactiva'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </details>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="pt-4 border-t gap-2">
+              {bulkDeactivateStep === 'search' && (
+                <>
+                  <Button variant="outline" onClick={() => { setBulkDeactivateOpen(false); resetBulkDeactivateModal(); }}>
+                    Cancelar
+                  </Button>
+                  <Button
+                    onClick={() => setBulkDeactivateStep('confirm')}
+                    disabled={!bulkDeactivateSearched || bulkDeactivateResults.length === 0}
+                    className="gap-2"
+                  >
+                    Continuar
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                    </svg>
+                  </Button>
+                </>
+              )}
+              {bulkDeactivateStep === 'confirm' && (
+                <>
+                  <Button variant="outline" onClick={() => setBulkDeactivateStep('search')} disabled={bulkDeactivating}>
+                    ← Volver
+                  </Button>
+                  <Button
+                    onClick={handleBulkDeactivate}
+                    disabled={bulkDeactivating}
+                    className={`gap-2 ${bulkDeactivateAction === 'activate' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+                  >
+                    {bulkDeactivating ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {bulkDeactivateAction === 'activate' ? 'Activando...' : 'Inactivando...'}
+                      </>
+                    ) : (
+                      <>
+                        <PowerOff className="h-4 w-4" />
+                        {bulkDeactivateAction === 'activate' ? 'Activar' : 'Inactivar'} {bulkDeactivateResults.length} fórmula{bulkDeactivateResults.length !== 1 ? 's' : ''}
+                      </>
+                    )}
+                  </Button>
+                </>
+              )}
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
