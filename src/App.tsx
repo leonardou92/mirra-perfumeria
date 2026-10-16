@@ -24,6 +24,7 @@ import Categorias from "./pages/Categorias";
 import WhatsappAdmin from "./pages/WhatsappAdmin";
 import CintilloMensajes from "./pages/CintilloMensajes";
 import Reportes from "./pages/Reportes";
+import Rastreo from "./pages/Rastreo";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ModuleProtectedRoute from "./components/ModuleProtectedRoute";
@@ -43,6 +44,7 @@ const App = () => (
             <Route path="/" element={<Hero />} />
             <Route path="/categoria/:categorySlug" element={<Hero />} />
             <Route path="/about" element={<AboutUs />} />
+            <Route path="/rastreo" element={<Rastreo />} />
           </Route>
           <Route path="/login" element={<Login />} />
 

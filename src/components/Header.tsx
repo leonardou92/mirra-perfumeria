@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, Menu, X } from 'lucide-react';
+import { ShoppingCart, Menu, X, Truck } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { getCatalogoPaginated, getMensajesCintilloActivos, type CintilloMensaje } from '@/integrations/api';
 
@@ -202,6 +202,13 @@ export function Header({ cartItemsCount, cartPulseKey, onCartClick }: HeaderProp
           {/* Botones de acción */}
           <div className="flex items-center space-x-2 md:space-x-4">
             <Link
+              to="/rastreo"
+              className="hidden sm:inline-flex items-center gap-1.5 justify-center border border-white/60 hover:bg-white/20 text-white px-3 py-2 rounded-lg font-medium transition-all duration-300 whitespace-nowrap text-sm"
+            >
+              <Truck className="w-4 h-4" />
+              Rastrear
+            </Link>
+            <Link
               to="/"
               className="hidden sm:inline-flex items-center justify-center bg-white/90 hover:bg-white text-[#CA9E67] px-4 py-2 rounded-lg font-medium transition-all duration-300 shadow-md hover:shadow-lg hover:scale-105 whitespace-nowrap text-sm md:text-base"
             >
@@ -285,6 +292,13 @@ export function Header({ cartItemsCount, cartPulseKey, onCartClick }: HeaderProp
               </div>
             )}
           </div>
+          <Link
+            to="/rastreo"
+            className="flex items-center gap-2 px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+          >
+            <Truck className="w-4 h-4" />
+            Rastrear Pedido
+          </Link>
           <Link
             to="/"
             className="block px-4 py-3 text-center bg-[#CA9E67] text-white rounded-lg font-medium hover:bg-[#b58a53] transition-colors mt-2"

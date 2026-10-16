@@ -424,6 +424,17 @@ export async function getOrdenesProduccionResumenPorMateria(desde?: string, hast
   return apiFetch(`/ordenes-produccion/resumen-por-materia${qs}`);
 }
 
+// Entradas de inventario de esencias (historial de producción real)
+export async function getEntradasEsencias(opts: { desde?: string; hasta?: string; producto_id?: number; limit?: number } = {}) {
+  const ps = new URLSearchParams();
+  if (opts.desde) ps.set('desde', opts.desde);
+  if (opts.hasta) ps.set('hasta', opts.hasta);
+  if (opts.producto_id != null) ps.set('producto_id', String(opts.producto_id));
+  if (opts.limit) ps.set('limit', String(opts.limit));
+  const qs = ps.toString() ? `?${ps.toString()}` : '';
+  return apiFetch(`/inventario/entradas-esencias${qs}`);
+}
+
 // Historial de movimientos de inventario (kardex).
 // Filtros: producto_id, tipo ('entrada'|'salida'), limit (default 200).
 export async function getInventarioMovimientos(opts: { producto_id?: number; tipo?: 'entrada' | 'salida'; limit?: number } = {}) {

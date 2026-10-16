@@ -7,7 +7,7 @@ import {
   getClientesTopResumen,
   getFormulas,
   getOrdenesProduccionResumen,
-  getOrdenesProduccionResumenPorMateria,
+  getEntradasEsencias,
   getPedidos,
   getPedidosResumenReportes,
   getProductos,
@@ -62,7 +62,7 @@ const REPORT_REQUIREMENTS: Record<ReportSlug, DataKey[]> = {
   'productos-favoritos': ['pedidos'],
   inventario: ['productos'],
   'rotacion-inventario': ['productos', 'pedidosTodos', 'categorias', 'formulasAll'],
-  'historial-produccion': ['produccionResumen', 'productos', 'categorias'],
+  'historial-produccion': ['produccionResumen'],
   'pedidos-estado': ['pedidos'],
   clientes: ['clientesResumen'],
   compras: ['pedidos', 'productos'],
@@ -229,7 +229,7 @@ export default function Reportes() {
       setLoadingInfo({ active: true, progress: 0, message: 'Cargando historial de producción...', etaSeconds: 0 });
       try {
         const [resProd] = await Promise.all([
-          getOrdenesProduccionResumenPorMateria(prodFechaInicio || undefined, prodFechaFin || undefined),
+          getEntradasEsencias({ desde: prodFechaInicio || undefined, hasta: prodFechaFin || undefined }),
         ]);
         if (cancelled) return;
         setProduccionResumen(Array.isArray(resProd) ? resProd : (resProd?.data || []));
@@ -435,6 +435,7 @@ export default function Reportes() {
     const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
     const thisMonth = now.getMonth();
     const thisYear = now.getFullYear();
+    const hasFechaFilter = !!(fechaInicio || fechaFin);
 
     for (const pedido of pedidos) {
       const estado = String(pedido?.estado || 'sin_estado').toLowerCase();
@@ -488,7 +489,11 @@ export default function Reportes() {
 
       monthlySales[monthKey] = (monthlySales[monthKey] || 0) + orderTotal;
       if (orderDayKey === todayKey) dailySales += orderTotal;
-      if (fecha.getFullYear() === thisYear && fecha.getMonth() === thisMonth) {
+      if (hasFechaFilter) {
+        // Con filtro activo: acumular todo el período
+        monthSales += orderTotal;
+        monthCompletedOrders += 1;
+      } else if (fecha.getFullYear() === thisYear && fecha.getMonth() === thisMonth) {
         monthSales += orderTotal;
         monthCompletedOrders += 1;
       }
@@ -653,7 +658,7 @@ export default function Reportes() {
       utilidadEstimada,
       ticketPromedio,
     };
-  }, [clientesResumen, pedidos, presentaciones, productos, ventasMetodo]);
+  }, [clientesResumen, pedidos, presentaciones, productos, ventasMetodo, fechaInicio, fechaFin]);
 
   const rotacionMetrics = useMemo(() => {
     const today = new Date();
@@ -764,8 +769,8 @@ export default function Reportes() {
       return (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Ventas hoy</p><p className="mt-2 text-2xl font-semibold tabular-nums">${metrics.dailySales.toFixed(2)}</p></CardContent></Card>
-          <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Ventas del mes</p><p className="mt-2 text-2xl font-semibold tabular-nums">${metrics.monthSales.toFixed(2)}</p></CardContent></Card>
-          <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Pedidos completados (mes)</p><p className="mt-2 text-2xl font-semibold tabular-nums">{metrics.monthCompletedOrders}</p></CardContent></Card>
+          <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{fechaInicio || fechaFin ? 'Ventas del período' : 'Ventas del mes'}</p><p className="mt-2 text-2xl font-semibold tabular-nums">${metrics.monthSales.toFixed(2)}</p></CardContent></Card>
+          <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{fechaInicio || fechaFin ? 'Pedidos completados' : 'Pedidos completados (mes)'}</p><p className="mt-2 text-2xl font-semibold tabular-nums">{metrics.monthCompletedOrders}</p></CardContent></Card>
           <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Estado del negocio</p><p className="mt-2 text-xl font-semibold">{metrics.businessStatus}</p><p className="mt-1 text-xs text-muted-foreground">{metrics.businessReason}</p></CardContent></Card>
           <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Producto más vendido</p><p className="mt-2 text-sm font-medium">{metrics.topProduct ? `${metrics.topProduct.nombre} (${metrics.topProduct.cantidad} uds)` : 'Sin datos'}</p></CardContent></Card>
           <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Presentación más vendida</p><p className="mt-2 text-sm font-medium">{metrics.topPresentation ? `${metrics.topPresentation.presentacion} (${metrics.topPresentation.cantidad} uds)` : 'Sin datos'}</p></CardContent></Card>
@@ -1205,113 +1210,134 @@ export default function Reportes() {
     }
 
     if (selectedReport === 'historial-produccion') {
-      const enriched = produccionResumen.map((pr: any) => {
-        const mid = String(pr.materia_prima_id ?? '');
-        const nombre = pr.materia_nombre || `Esencia #${mid}`;
-        const rawDate = pr.ultima_produccion;
-        const ultimaFecha = rawDate ? new Date(rawDate) : null;
-        const validDate = ultimaFecha && !isNaN(ultimaFecha.getTime()) ? ultimaFecha : null;
-        const gramos = Number(pr.cantidad_total_gramos ?? 0);
-        return { mid, nombre, veces: Number(pr.veces_producido ?? 0), gramos, ultimaFecha: validDate };
+      // Parse each inventory entry row
+      const entries = produccionResumen.map((r: any) => {
+        const fecha = r.creado_en ? new Date(r.creado_en) : null;
+        return {
+          id: r.id,
+          productoId: r.producto_id,
+          nombre: r.producto_nombre || `Esencia #${r.producto_id}`,
+          almacen: r.almacen_nombre || null,
+          gramos: Number(r.cantidad ?? 0),
+          motivo: r.motivo || null,
+          fecha: fecha && !isNaN(fecha.getTime()) ? fecha : null,
+        };
       });
+
+      // Group by producto
+      const gruposMap = new Map<number, { nombre: string; totalGramos: number; entradas: typeof entries }>();
+      for (const e of entries) {
+        const g = gruposMap.get(e.productoId) ?? { nombre: e.nombre, totalGramos: 0, entradas: [] };
+        g.totalGramos += e.gramos;
+        g.entradas.push(e);
+        gruposMap.set(e.productoId, g);
+      }
+
+      // Sort entries within each group newest first
+      for (const g of gruposMap.values()) {
+        g.entradas.sort((a, b) => (b.fecha?.getTime() ?? 0) - (a.fecha?.getTime() ?? 0));
+      }
 
       const searchLow = prodSearch.toLowerCase();
-      let filtered = enriched.filter((r) => {
-        if (searchLow && !r.nombre.toLowerCase().includes(searchLow)) return false;
-        return true;
-      });
+      let grupos = Array.from(gruposMap.values()).filter((g) =>
+        !searchLow || g.nombre.toLowerCase().includes(searchLow)
+      );
 
-      filtered = [...filtered].sort((a, b) => {
-        if (prodOrden === 'nombre') return a.nombre.localeCompare(b.nombre);
-        if (prodOrden === 'reciente') {
-          if (!a.ultimaFecha && !b.ultimaFecha) return 0;
-          if (!a.ultimaFecha) return 1;
-          if (!b.ultimaFecha) return -1;
-          return b.ultimaFecha.getTime() - a.ultimaFecha.getTime();
-        }
-        return b.gramos - a.gramos;
-      });
+      if (prodOrden === 'nombre') {
+        grupos = [...grupos].sort((a, b) => a.nombre.localeCompare(b.nombre));
+      } else if (prodOrden === 'reciente') {
+        grupos = [...grupos].sort((a, b) => {
+          const af = a.entradas[0]?.fecha?.getTime() ?? 0;
+          const bf = b.entradas[0]?.fecha?.getTime() ?? 0;
+          return bf - af;
+        });
+      } else {
+        // veces = mayor total gramos
+        grupos = [...grupos].sort((a, b) => b.totalGramos - a.totalGramos);
+      }
+
+      const fmtG = (g: number) => g >= 1000 ? `${(g / 1000).toFixed(2)} kg` : `${g.toLocaleString('es-VE')} g`;
 
       return (
         <div className="space-y-4">
           <Card>
             <CardHeader className="border-b border-border/60 pb-4 space-y-3">
-              <CardTitle className="text-base font-medium">Historial de producción por esencia</CardTitle>
-              <p className="text-xs text-muted-foreground">Órdenes completadas — cuántos gramos de cada ESC. INSP. se utilizaron en producción</p>
+              <CardTitle className="text-base font-medium">Entradas de inventario — Esencias</CardTitle>
+              <p className="text-xs text-muted-foreground">Gramos añadidos a cada ESC. INSP., agrupados por esencia</p>
 
-              {/* Rango de fechas */}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="flex items-center gap-2 flex-1">
                   <label className="text-xs text-muted-foreground whitespace-nowrap">Desde</label>
-                  <input
-                    type="date"
-                    value={prodFechaInicio}
-                    onChange={(e) => setProdFechaInicio(e.target.value)}
-                    className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
+                  <input type="date" value={prodFechaInicio} onChange={(e) => setProdFechaInicio(e.target.value)}
+                    className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
                 </div>
                 <div className="flex items-center gap-2 flex-1">
                   <label className="text-xs text-muted-foreground whitespace-nowrap">Hasta</label>
-                  <input
-                    type="date"
-                    value={prodFechaFin}
-                    onChange={(e) => setProdFechaFin(e.target.value)}
-                    className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  />
+                  <input type="date" value={prodFechaFin} onChange={(e) => setProdFechaFin(e.target.value)}
+                    className="flex-1 h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring" />
                 </div>
               </div>
 
-              {/* Búsqueda + Orden */}
               <div className="flex flex-col gap-2 sm:flex-row">
-                <input
-                  type="text"
-                  placeholder="Buscar esencia..."
-                  value={prodSearch}
+                <input type="text" placeholder="Buscar esencia..." value={prodSearch}
                   onChange={(e) => setProdSearch(e.target.value)}
-                  className="flex-1 h-10 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-                <select
-                  value={prodOrden}
-                  onChange={(e) => setProdOrden(e.target.value as 'veces' | 'reciente' | 'nombre')}
-                  className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-44"
-                >
-                  <option value="veces">Mayor uso (g)</option>
+                  className="flex-1 h-10 rounded-md border border-input bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
+                <select value={prodOrden} onChange={(e) => setProdOrden(e.target.value as 'veces' | 'reciente' | 'nombre')}
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-44">
+                  <option value="veces">Mayor cantidad (g)</option>
                   <option value="reciente">Más recientes</option>
                   <option value="nombre">Nombre A–Z</option>
                 </select>
               </div>
             </CardHeader>
-            <CardContent className="pt-4 space-y-2">
-              {filtered.length === 0 && (
-                <p className="text-sm text-muted-foreground py-4 text-center">No hay producciones para mostrar.</p>
+            <CardContent className="pt-4 space-y-3">
+              {grupos.length === 0 && (
+                <p className="text-sm text-muted-foreground py-4 text-center">No hay entradas de inventario para mostrar.</p>
               )}
-              {filtered.map((r) => {
-                const ultimaStr = r.ultimaFecha
-                  ? r.ultimaFecha.toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })
-                  : null;
-                const gramosLabel = r.gramos >= 1000
-                  ? `${(r.gramos / 1000).toFixed(2)} kg`
-                  : `${r.gramos.toLocaleString('es-VE')} g`;
-                return (
-                  <div key={r.mid} className="flex flex-col gap-1 rounded-md border p-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="font-medium text-sm leading-tight truncate">{r.nombre}</p>
+              {grupos.map((g) => (
+                <details key={g.nombre} className="group rounded-md border overflow-hidden">
+                  <summary className="flex items-center justify-between p-3 cursor-pointer select-none hover:bg-muted/40 transition-colors list-none">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm leading-tight truncate">{g.nombre}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {ultimaStr ? `Última producción: ${ultimaStr}` : 'Sin fecha registrada'}
-                        {' · '}{r.veces} {r.veces === 1 ? 'orden' : 'órdenes'}
+                        {g.entradas.length} entrada{g.entradas.length !== 1 ? 's' : ''}
+                        {g.entradas[0]?.fecha && (
+                          <span className="ml-1.5">· Última: {g.entradas[0].fecha.toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                        )}
                       </p>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0 ml-3">
                       <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 whitespace-nowrap">
-                        {gramosLabel} usados
+                        {fmtG(g.totalGramos)} total
                       </span>
+                      <svg className="h-4 w-4 text-muted-foreground group-open:rotate-180 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
                     </div>
+                  </summary>
+                  <div className="border-t divide-y divide-border/50">
+                    {g.entradas.map((e) => {
+                      const fechaStr = e.fecha?.toLocaleDateString('es-VE', { day: '2-digit', month: 'short', year: 'numeric' }) ?? 'Sin fecha';
+                      const horaStr = e.fecha?.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit' }) ?? '';
+                      return (
+                        <div key={e.id} className="flex items-center justify-between px-4 py-2.5 bg-muted/20">
+                          <div className="min-w-0">
+                            <p className="text-xs text-muted-foreground">
+                              {fechaStr}{horaStr && ` · ${horaStr}`}
+                              {e.almacen && <span className="ml-1.5">· {e.almacen}</span>}
+                            </p>
+                            {e.motivo && <p className="text-xs text-muted-foreground/70 truncate max-w-xs">{e.motivo}</p>}
+                          </div>
+                          <span className="text-xs font-semibold text-amber-700 dark:text-amber-300 shrink-0 ml-3">+{fmtG(e.gramos)}</span>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-              {filtered.length > 0 && (
-                <p className="text-xs text-muted-foreground pt-2">
-                  Mostrando {filtered.length} de {enriched.length} esencias con historial de producción.
+                </details>
+              ))}
+              {grupos.length > 0 && (
+                <p className="text-xs text-muted-foreground pt-1">
+                  {grupos.length} esencia{grupos.length !== 1 ? 's' : ''} · {entries.length} entradas en total · {fmtG(entries.reduce((s, e) => s + e.gramos, 0))} acumulados
                 </p>
               )}
             </CardContent>
