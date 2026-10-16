@@ -30,6 +30,12 @@ export function Header({ cartItemsCount, cartPulseKey, onCartClick }: HeaderProp
     setIsMenuOpen(false);
   }, [location]);
 
+  // Bloquear scroll del body cuando el menú está abierto
+  useEffect(() => {
+    document.body.style.overflow = isMenuOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isMenuOpen]);
+
   // Efecto para el scroll
   useEffect(() => {
     const handleScroll = () => {
@@ -243,65 +249,66 @@ export function Header({ cartItemsCount, cartPulseKey, onCartClick }: HeaderProp
 
       {/* Menú móvil */}
       <div
-        className={`md:hidden bg-white/95 backdrop-blur-sm transition-all duration-300 ease-in-out overflow-hidden ${isMenuOpen ? 'max-h-96 py-4 border-t border-white/20' : 'max-h-0 py-0'
+        className={`md:hidden bg-white shadow-lg transition-all duration-300 ease-in-out overflow-y-auto ${isMenuOpen ? 'max-h-[calc(100svh-5rem)] border-t border-gray-200' : 'max-h-0 overflow-hidden'
           }`}
       >
-        <div className="px-4 space-y-2">
+        <div className="px-4 py-3 space-y-1">
           <Link
             to="/"
-            className="block px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+            className="block px-3 py-2.5 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
           >
             Inicio
           </Link>
           <Link
             to="/about"
-            className="block px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+            className="block px-3 py-2.5 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
           >
             Sobre Nosotros
           </Link>
           <Link
             to="/pedidos"
-            className="block px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+            className="block px-3 py-2.5 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
           >
             Pedidos
           </Link>
-          <Link
-            to="#catalog"
-            className="block px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
-          >
-            Nuestros Productos
-          </Link>
-          {/* Categorías en móvil (misma fuente que el dropdown 'Productos') */}
-          <div className="block px-4 py-3">
+
+          {/* Sección Productos */}
+          <div>
+            <p className="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
+              Productos
+            </p>
             {catsLoading ? (
-              <div className="text-gray-600 px-2 py-1">Cargando categorías...</div>
+              <div className="px-3 py-2 text-sm text-gray-500">Cargando...</div>
             ) : (
-              <div className="space-y-2">
-                <Link to="/" className="block px-2 py-2 text-gray-700 hover:bg-gray-100 rounded">
+              <>
+                <Link to="/" className="block px-3 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm transition-colors">
                   Todos
                 </Link>
                 {categoriesList.map((c: any) => {
                   const name = c.nombre ?? c.name ?? '';
                   const slug = (c.slug ?? (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
                   return (
-                    <Link key={c.__key ?? c.id ?? slug} to={`/categoria/${slug}`} className="block px-2 py-2 text-gray-700 hover:bg-gray-100 rounded">
+                    <Link key={c.__key ?? c.id ?? slug} to={`/categoria/${slug}`} className="block px-3 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm transition-colors">
                       {name}
                     </Link>
                   );
                 })}
-              </div>
+              </>
             )}
           </div>
+
+          <div className="h-px bg-gray-100 my-1" />
+
           <Link
             to="/rastreo"
-            className="flex items-center gap-2 px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+            className="flex items-center gap-2 px-3 py-2.5 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
           >
             <Truck className="w-4 h-4" />
             Rastrear Pedido
           </Link>
           <Link
             to="/"
-            className="block px-4 py-3 text-center bg-[#CA9E67] text-white rounded-lg font-medium hover:bg-[#b58a53] transition-colors mt-2"
+            className="block px-3 py-2.5 text-center bg-[#CA9E67] text-white rounded-lg font-medium hover:bg-[#b58a53] transition-colors"
           >
             Comprar Ahora
           </Link>
