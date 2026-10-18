@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Header from '@/components/Header';
 import ProductCard from '@/components/ProductCard';
@@ -16,6 +16,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 
 export default function Hero() {
   const [fullProducts, setFullProducts] = useState<Product[] | null>(null);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
   const isMobile = useIsMobile();
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
@@ -23,7 +24,7 @@ export default function Hero() {
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState<number | null>(null);
   const { categorySlug } = useParams();
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const selectedCategory = categorySlug || 'all';
   const [search, setSearch] = useState<string>('');
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
@@ -41,8 +42,6 @@ export default function Hero() {
 
   const { items: cartItems, addItem, removeItem, updateQty, clear, count } = useCart();
   const [tasaPublic, setTasaPublic] = useState<any | null>(null);
-  const catalogRouteKey = categorySlug || 'all';
-  const randomCatalogPageRef = useRef<string | null>(null);
 
   useEffect(() => {
     trackCatalogPageView();
@@ -91,24 +90,17 @@ export default function Hero() {
     }
   };
 
-  const getRandomCatalogPage = (totalItems: number, itemsPerPage: number): number => {
-    const totalPages = Math.max(1, Math.ceil(totalItems / itemsPerPage));
-    return totalPages <= 1 ? 1 : (Math.floor(Math.random() * totalPages) + 1);
-  };
-
-  // Load public catalog - fetch all products once and handle pagination client-side
-  // Backend returns all products without server-side pagination
+  // The API returns the catalog in random order; client-side pagination keeps that order stable.
   useEffect(() => {
     let mounted = true;
     setLoading(true);
     (async () => {
       try {
-        // Fetch all products from backend (ignoring limit/offset since backend doesn't paginate)
         const res = await getCatalogoPaginated({});
         // getCatalogoPaginated normaliza a { items, meta }
         const items = Array.isArray(res) ? res : (res?.items ?? res?.data ?? []);
 
-        let productsList: Product[] = (Array.isArray(items) ? items : []).map((item: any) => ({
+        const productsList: Product[] = (Array.isArray(items) ? items : []).map((item: any) => ({
           id: item.id ?? item.producto_id ?? 0,
           name: item.nombre ?? item.name ?? '',
           image_url: item.image_url ?? item.imagen ?? item.image ?? undefined,
@@ -130,54 +122,13 @@ export default function Hero() {
         } as Product));
 
         if (!mounted) return;
-
-        // Apply search filter
-        const q = search.trim().toLowerCase();
-        const filtered = q
-          ? productsList.filter((p) => {
-            return (
-              (p.name || '').toLowerCase().includes(q) ||
-              (p.brand || '').toLowerCase().includes(q) ||
-              (p.description || '').toLowerCase().includes(q) ||
-              (p.category || '').toLowerCase().includes(q)
-            );
-          })
-          : productsList;
-
-        // Apply category filter if needed
-        const categoryFiltered = selectedCategory === 'all'
-          ? filtered
-          : filtered.filter((p) => {
-            const catName = p.category || '';
-            const catSlug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-            return catSlug === selectedCategory.toLowerCase();
-          });
-
-        // Store full filtered list
-        setFullProducts(categoryFiltered);
-
-        // Calculate pagination for current page
-        const totalCount = categoryFiltered.length;
-        const totalPages = Math.max(1, Math.ceil(totalCount / perPage));
-        const isFirstRouteLoad = randomCatalogPageRef.current !== catalogRouteKey;
-
-        let activePage = page;
-        if (isFirstRouteLoad) {
-          randomCatalogPageRef.current = catalogRouteKey;
-          activePage = getRandomCatalogPage(totalCount, perPage);
-          setPage(activePage);
-        }
-
-        const start = (activePage - 1) * perPage;
-        const pageItems = categoryFiltered.slice(start, start + perPage);
-
-        setProducts(pageItems);
-        setTotal(totalCount);
+        setCatalogProducts(productsList);
       } catch (err) {
         console.error('Error cargando catálogo público:', err);
         toast.error('Error al cargar catálogo público');
         if (mounted) {
           setFullProducts([]);
+          setCatalogProducts([]);
           setProducts([]);
           setTotal(0);
         }
@@ -186,17 +137,46 @@ export default function Hero() {
       }
     })();
     return () => { mounted = false; };
-  }, [page, perPage, search, selectedCategory, categorySlug]);
+  }, []);
 
-  // Update selectedCategory when URL param changes
   useEffect(() => {
-    if (categorySlug) {
-      setSelectedCategory(categorySlug);
-    } else {
-      setSelectedCategory('all');
-    }
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? catalogProducts.filter((product) => (
+        (product.name || '').toLowerCase().includes(q) ||
+        (product.brand || '').toLowerCase().includes(q) ||
+        (product.description || '').toLowerCase().includes(q) ||
+        (product.category || '').toLowerCase().includes(q)
+      ))
+      : catalogProducts;
+
+    const categoryFiltered = selectedCategory === 'all'
+      ? filtered
+      : filtered.filter((product) => {
+        const catName = product.category || '';
+        const catSlug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        return catSlug === selectedCategory.toLowerCase();
+      });
+
+    setFullProducts(categoryFiltered);
+    setTotal(categoryFiltered.length);
+  }, [catalogProducts, search, selectedCategory]);
+
+  useEffect(() => {
+    setPage(1);
   }, [categorySlug]);
 
+  useEffect(() => {
+    if (!fullProducts) return;
+    const totalPages = Math.max(1, Math.ceil(fullProducts.length / perPage));
+    const activePage = Math.min(page, totalPages);
+    if (activePage !== page) setPage(activePage);
+
+    const start = (activePage - 1) * perPage;
+    setProducts(fullProducts.slice(start, start + perPage));
+  }, [fullProducts, page, perPage]);
+
+  // not exposing categories selector on the public Hero
   // Obtener tasa pública cacheada para mostrar precios convertidos en el carrito público
   useEffect(() => {
     let mounted = true;
@@ -271,12 +251,11 @@ export default function Hero() {
         </div>
       </section>
 
-      {/* Featured Products Carousel - Commented out for now */}
-      {/* {!search.trim() && (
+      {!loading && catalogProducts.length > 0 && (
         <div className="relative z-10 py-8 sm:py-12 bg-gradient-to-b from-white/80 to-transparent">
-          {products.length > 0 && <ProductCarousel products={fullProducts || products} isMobile={isMobile} />}
+          <ProductCarousel products={catalogProducts} />
         </div>
-      )} */}
+      )}
 
       <div id="catalog" className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12 relative z-10">
         <div className="text-center mb-8 sm:mb-12 px-2">
@@ -837,4 +816,3 @@ export default function Hero() {
     </div>
   );
 }
-

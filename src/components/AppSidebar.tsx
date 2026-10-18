@@ -1,4 +1,4 @@
-import { Home, Package, Users, Warehouse, FlaskConical, Building2, CreditCard, Receipt, LogOut, Layers, Award, MessageCircle, BarChart3, Megaphone } from "lucide-react";
+import { Home, Package, Users, Warehouse, FlaskConical, Building2, CreditCard, Receipt, LogOut, Layers, Award, MessageCircle, BarChart3, Megaphone, Star, TicketPercent } from "lucide-react";
 import { useLocation } from 'react-router-dom';
 import React, { useEffect } from 'react';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -63,6 +63,13 @@ const menuGroups: MenuGroup[] = [
     items: [
       { title: "Tasas de cambio", url: "/tasas-cambio", icon: CreditCard, module: 'tasas_cambio' },
       { title: "Bancos", url: "/bancos", icon: Building2, module: 'bancos' },
+    ],
+  },
+  {
+    label: "Marketing",
+    items: [
+      { title: "Destacados", url: "/admin/marketing/destacados", icon: Star, module: 'usuarios' },
+      { title: "Cupones", url: "/admin/marketing/cupones", icon: TicketPercent, module: 'usuarios' },
     ],
   },
   {

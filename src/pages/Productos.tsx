@@ -18,7 +18,7 @@ import { Form, FormItem, FormLabel, FormControl } from "@/components/ui/form";
 import { useForm } from "react-hook-form";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Search, Plus, Edit, Trash2, Warehouse, Loader2 } from "lucide-react";
+import { Search, Plus, Edit, Trash2, Warehouse, Loader2, Star } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -92,6 +92,7 @@ export default function Productos() {
 
   const [categoriaId, setCategoriaId] = useState<number | null>(null);
   const [visibleEnCatalogo, setVisibleEnCatalogo] = useState(true);
+  const [destacado, setDestacado] = useState(false);
   const [marcaId, setMarcaId] = useState<number | null>(null);
   const [categorias, setCategorias] = useState<any[]>([]);
   const [marcas, setMarcas] = useState<any[]>([]);
@@ -141,6 +142,7 @@ export default function Productos() {
       setCategoriaId(editingProduct?.categoria_id ?? null);
       setMarcaId(editingProduct?.marca_id ?? null);
       setVisibleEnCatalogo(editingProduct?.visible_en_catalogo ?? true);
+      setDestacado(editingProduct?.destacado ?? false);
       form.setValue('visible_en_catalogo', editingProduct?.visible_en_catalogo ?? true);
       // cargar categorías disponibles cuando se abre el modal
       (async () => {
@@ -218,6 +220,7 @@ export default function Productos() {
         categoria_id: categoriaId ?? null,
         marca_id: marcaId ?? null,
         visible_en_catalogo: Boolean(visibleEnCatalogo),
+        destacado,
       };
       console.log("Creando/actualizando producto, payload:", payload);
       if (editingProduct) {
@@ -248,6 +251,7 @@ export default function Productos() {
       setCategoriaId(null);
       setMarcaId(null);
       setVisibleEnCatalogo(true);
+      setDestacado(false);
       setProductDetalle(null);
     }
   }, [isOpen, editingProduct]);
@@ -293,6 +297,7 @@ export default function Productos() {
           categoria_id: categoriaId ?? (editingProduct?.categoria_id ?? null),
           marca_id: marcaId ?? (editingProduct?.marca_id ?? null),
           visible_en_catalogo: Boolean(visibleEnCatalogo ?? true),
+          destacado,
         };
 
         const updated = await updateProducto(editingProduct.id, payload);
@@ -602,6 +607,20 @@ export default function Productos() {
                             Mostrar en catálogo público
                           </label>
                         </div>
+
+                        <div className="flex items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
+                          <input
+                            id="destacado"
+                            type="checkbox"
+                            checked={destacado}
+                            onChange={(e) => setDestacado(e.target.checked)}
+                            className="h-4 w-4 accent-primary"
+                          />
+                          <label htmlFor="destacado" className="flex items-center gap-2 text-sm font-medium text-foreground">
+                            <Star className="h-4 w-4 text-amber-500" />
+                            Mostrar en productos destacados
+                          </label>
+                        </div>
                       </div>
 
                       {/* Columna Derecha - Imagen */}
@@ -741,6 +760,7 @@ export default function Productos() {
                   setCategoriaId(product.categoria_id ?? null);
                   setMarcaId(product.marca_id ?? null);
                   setVisibleEnCatalogo(product.visible_en_catalogo ?? true);
+                  setDestacado(product.destacado ?? false);
                   form.setValue('visible_en_catalogo', product.visible_en_catalogo ?? true);
                   setIsOpen(true);
                   setLoadingDetalle(true);
@@ -773,6 +793,11 @@ export default function Productos() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <p className="font-semibold truncate">{product.nombre}</p>
+                            {product.destacado && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                                <Star className="h-3 w-3 fill-current" /> Destacado
+                              </span>
+                            )}
                             {product.visible_en_catalogo === false && (
                               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground shrink-0">Oculto</span>
                             )}
@@ -849,6 +874,11 @@ export default function Productos() {
                         <TableCell className="font-medium">
                           <div className="flex items-center gap-2">
                             <span>{product.nombre}</span>
+                            {product.destacado && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                                <Star className="h-3 w-3 fill-current" /> Destacado
+                              </span>
+                            )}
                             {product.visible_en_catalogo === false ? (
                               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Oculto</span>
                             ) : null}
@@ -877,6 +907,7 @@ export default function Productos() {
                               setCategoriaId(product.categoria_id ?? null);
                               setMarcaId(product.marca_id ?? null);
                               setVisibleEnCatalogo(product.visible_en_catalogo ?? true);
+                              setDestacado(product.destacado ?? false);
                               form.setValue('visible_en_catalogo', product.visible_en_catalogo ?? true);
                               setIsOpen(true);
                               setLoadingDetalle(true);
