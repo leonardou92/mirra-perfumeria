@@ -117,17 +117,16 @@ const ProductCarousel: React.FC<ProductCarouselProps> = ({ products: providedPro
           <div className="mx-auto mt-4 h-1 w-20 rounded-full bg-gradient-to-r from-amber-400 to-copper-600" />
         </div>
 
-        <Slider {...settings} className="featured-carousel -mx-2 pb-8">
+        <Slider {...settings} className="featured-carousel -mx-1 pb-8 sm:-mx-2">
           {featuredProducts.map((product) => (
-            <div key={product.id} className="px-2 pb-3">
-              <div className="h-full overflow-hidden rounded-2xl border border-amber-100/80 bg-white shadow-md transition duration-300 hover:-translate-y-1 hover:shadow-xl">
-                <ProductCard
-                  product={product}
-                  onAddToCart={handleAddToCart}
-                  openModalOnAdd
-                  showStock={false}
-                />
-              </div>
+            <div key={product.id} className="h-full px-2 pb-4 sm:px-3 sm:pb-3">
+              <ProductCard
+                product={product}
+                onAddToCart={handleAddToCart}
+                openModalOnAdd
+                showStock={false}
+                featuredLayout
+              />
             </div>
           ))}
         </Slider>
