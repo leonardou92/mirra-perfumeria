@@ -2,17 +2,26 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Header from '@/components/Header';
 import ProductCard from '@/components/ProductCard';
-import { getCatalogoPaginated, getCachedTasaActiva, createPedidoVentaPublic, lookupClienteByCedula } from '@/integrations/api';
-import useCart from '@/hooks/use-cart';
+import { getCatalogoPaginated, getCachedTasaActiva, createPedidoVentaPublic, lookupClienteByCedula, validarCuponPublic } from '@/integrations/api';
+import useCart, { CartItem } from '@/hooks/use-cart';
 import { Product } from '@/lib/types';
 import { getImageUrl } from '@/lib/utils';
 import { trackCatalogPageView } from '@/lib/google-ads';
 import { toast } from 'sonner';
-import { Loader2, X, Search, User, Phone, FileText, Trash2, Send, MessageCircle } from 'lucide-react';
+import { Loader2, X, Search, User, Phone, FileText, Trash2, Send, MessageCircle, TicketPercent, Check } from 'lucide-react';
 
 import Footer from '@/components/Footer';
 import ProductCarousel from '@/components/SocialMediaCarousel';
 import { useIsMobile } from '@/hooks/use-mobile';
+
+interface CuponPublico {
+  id: number;
+  codigo: string;
+  descuento_porcentaje: number;
+  descripcion?: string | null;
+  es_global?: boolean;
+  colaborador_nombre?: string | null;
+}
 
 export default function Hero() {
   const [fullProducts, setFullProducts] = useState<Product[] | null>(null);
@@ -39,6 +48,11 @@ export default function Hero() {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
   const [cartPulseKey, setCartPulseKey] = useState(0);
+  // Cupón de descuento aplicado en el carrito
+  const [cuponCodigo, setCuponCodigo] = useState<string>('');
+  const [cuponAplicado, setCuponAplicado] = useState<CuponPublico | null>(null);
+  const [cuponCargando, setCuponCargando] = useState(false);
+  const [cuponError, setCuponError] = useState<string>('');
 
   const { items: cartItems, addItem, removeItem, updateQty, clear, count } = useCart();
   const [tasaPublic, setTasaPublic] = useState<any | null>(null);
@@ -206,6 +220,68 @@ export default function Hero() {
       return;
     }
     setIsCheckoutOpen(true);
+  }
+
+  // --- Cupón de descuento -------------------------------------------------
+  const precioUnitario = (it: CartItem) =>
+    Number((it.product as any)?.precio_snapshot ?? (it.product as any)?.price ?? (it.product as any)?.precio_venta ?? 0);
+
+  const subtotalCarrito = cartItems.reduce((s, it) => s + (precioUnitario(it) * Number(it.qty || 0)), 0);
+
+  const descuentoCupon = cuponAplicado
+    ? Math.round(subtotalCarrito * (Number(cuponAplicado.descuento_porcentaje || 0) / 100) * 100) / 100
+    : 0;
+
+  const totalCarrito = Math.max(0, Math.round((subtotalCarrito - descuentoCupon) * 100) / 100);
+
+  const formatMonto = (valor: number) => {
+    const monto = Number(valor) || 0;
+    if (tasaPublic && typeof tasaPublic.monto === 'number' && tasaPublic.monto > 0) {
+      return `${tasaPublic.simbolo || 'USD'} ${Number(monto * Number(tasaPublic.monto)).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    return `$${Number(monto).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  async function aplicarCupon() {
+    const codigo = cuponCodigo.trim();
+    if (!codigo) {
+      setCuponError('Ingresa el código del cupón');
+      return;
+    }
+    if (cuponCargando) return;
+
+    try {
+      setCuponCargando(true);
+      setCuponError('');
+      const resultado = (await validarCuponPublic(codigo)) as CuponPublico & { valid?: boolean; error?: string };
+      if (!resultado?.valid) {
+        setCuponAplicado(null);
+        setCuponError(resultado?.error || 'Cupón inválido');
+        return;
+      }
+      setCuponAplicado(resultado);
+      setCuponCodigo(String(resultado.codigo || codigo).toUpperCase());
+      toast.success(`Cupón ${resultado.codigo} aplicado: -${resultado.descuento_porcentaje}%`);
+    } catch (error: any) {
+      setCuponAplicado(null);
+      const mensaje = error?.message || 'No se pudo validar el cupón';
+      setCuponError(mensaje);
+      toast.error(mensaje);
+    } finally {
+      setCuponCargando(false);
+    }
+  }
+
+  function quitarCupon() {
+    setCuponAplicado(null);
+    setCuponCodigo('');
+    setCuponError('');
+  }
+
+  function vaciarCarrito() {
+    clear();
+    quitarCupon();
+    toast('Carrito vaciado');
   }
 
   return (
@@ -632,6 +708,9 @@ export default function Hero() {
                         if (tasaPublic && typeof tasaPublic.monto === 'number' && tasaPublic.monto > 0) {
                           payload.tasa_cambio_monto = tasaPublic.monto;
                         }
+                        if (cuponAplicado?.codigo) {
+                          payload.cupon_codigo = String(cuponAplicado.codigo).toUpperCase();
+                        }
 
                         try {
                           setCheckoutLoading(true);
@@ -640,13 +719,27 @@ export default function Hero() {
                           setTimeout(() => setCheckoutSuccess(false), 2500);
                           toast.success('¡Pedido enviado con éxito!');
                           clear();
+                          quitarCupon();
                           setIsCartOpen(false);
                           setIsCheckoutOpen(false);
                           setNombreCliente(''); setTelefonoCliente(''); setCedulaCliente(''); setTipoDocumento('V');
                           setClienteId(null); setClienteExistente(false); setDocumentoConsultado(false);
                         } catch (err: any) {
                           console.error('Error creando pedido:', err);
-                          toast.error(err?.message || 'Error al crear pedido');
+                          const rawError = String(err?.message || 'Error al crear pedido');
+                          let mensajeError = rawError;
+                          let esErrorCupon = false;
+                          try {
+                            const parsed = JSON.parse(rawError);
+                            if (parsed && typeof parsed === 'object') {
+                              if (parsed.cupon_invalido) esErrorCupon = true;
+                              if (parsed.error) mensajeError = String(parsed.error);
+                            }
+                          } catch (e) { /* noop: el backend puede responder con texto plano */ }
+                          if (/cup[oó]n/i.test(rawError)) esErrorCupon = true;
+                          toast.error(mensajeError);
+                          // Si el cupón fue rechazado (vencido o sin usos) se libera para que el cliente pueda quitarlo
+                          if (esErrorCupon) quitarCupon();
                         } finally {
                           setCheckoutLoading(false);
                         }
@@ -770,29 +863,91 @@ export default function Hero() {
             {/* Footer with Total and Actions (Fixed at bottom) */}
             {cartItems.length > 0 && (
               <div className="border-t border-gray-100 bg-white p-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20 sticky bottom-0">
+                {/* Campo de cupón de descuento */}
+                <div className="mb-4">
+                  {cuponAplicado ? (
+                    <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
+                          <Check className="w-4 h-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-emerald-800">
+                            Cupón {cuponAplicado.codigo} aplicado
+                          </p>
+                          <p className="text-xs text-emerald-700">
+                            -{cuponAplicado.descuento_porcentaje}% de descuento
+                            {cuponAplicado.colaborador_nombre ? ` · ${cuponAplicado.colaborador_nombre}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={quitarCupon}
+                        className="p-1 rounded-md text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 transition-colors"
+                        title="Quitar cupón"
+                        aria-label="Quitar cupón"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <label htmlFor="cupon-carrito" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+                        <TicketPercent className="w-4 h-4" /> ¿Tienes un cupón de descuento?
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="cupon-carrito"
+                          type="text"
+                          value={cuponCodigo}
+                          onChange={(e) => { setCuponCodigo(e.target.value.toUpperCase()); setCuponError(''); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void aplicarCupon(); } }}
+                          placeholder="Ingresa tu código"
+                          className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm uppercase focus:border-copper-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-copper-500/30 transition-all"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void aplicarCupon()}
+                          disabled={cuponCargando}
+                          className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 transition-colors disabled:opacity-60 flex items-center gap-2"
+                        >
+                          {cuponCargando ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                          Aplicar
+                        </button>
+                      </div>
+                      {cuponError && <p className="mt-1.5 text-xs text-red-600">{cuponError}</p>}
+                    </>
+                  )}
+                </div>
+
                 <div className="flex justify-between items-end mb-4">
                   <div>
-                    <p className="text-sm text-gray-500">Total estimado</p>
+                    <p className="text-sm text-gray-500">{cuponAplicado ? 'Total con descuento' : 'Total estimado'}</p>
                     <p className="text-2xl font-bold text-gray-900 leading-none mt-1">
-                      {(() => {
-                        const subtotal = cartItems.reduce((s, it) => {
-                          const base = Number((it.product as any)?.precio_snapshot ?? (it.product as any)?.price ?? (it.product as any)?.precio_venta ?? 0);
-                          return s + (base * it.qty);
-                        }, 0);
-                        if (tasaPublic && typeof tasaPublic.monto === 'number' && tasaPublic.monto > 0) {
-                          return `${tasaPublic.simbolo || 'USD'} ${Number(subtotal * Number(tasaPublic.monto)).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                        }
-                        return `${Number(subtotal).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                      })()}
+                      {formatMonto(totalCarrito)}
                     </p>
                   </div>
                   {!isCheckoutOpen && <p className="text-xs text-green-600 font-medium bg-green-50 px-2 py-1 rounded-md">Envío por coordinar</p>}
                 </div>
 
+                {descuentoCupon > 0 && (
+                  <div className="mb-4 space-y-1 rounded-xl bg-emerald-50/70 px-3 py-2 text-sm">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Subtotal</span>
+                      <span>{formatMonto(subtotalCarrito)}</span>
+                    </div>
+                    <div className="flex justify-between text-emerald-700 font-medium">
+                      <span>Descuento cupón ({cuponAplicado?.descuento_porcentaje}%)</span>
+                      <span>-{formatMonto(descuentoCupon)}</span>
+                    </div>
+                  </div>
+                )}
+
                 {!isCheckoutOpen ? (
                   <div className="flex gap-3">
                     <button
-                      onClick={() => { clear(); toast('Carrito vaciado'); }}
+                      onClick={vaciarCarrito}
                       className="px-4 py-3 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 hover:text-red-500 hover:border-red-200 transition-colors"
                       title="Vaciar carrito"
                     >

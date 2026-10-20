@@ -3,10 +3,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getPedidosStats, getPedidosPaginated, getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, updatePedidoAjustes, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas, getCatalogoPaginated, completarOrdenProduccion, searchPedidos } from "@/integrations/api";
+import { getPedidosStats, getPedidosPaginated, getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, updatePedidoAjustes, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas, getCatalogoPaginated, completarOrdenProduccion, searchPedidos, getPedidosCuponesResumen } from "@/integrations/api";
 import PaymentByBank from '@/components/PaymentByBank';
 import { parseApiError, getImageUrl } from '@/lib/utils';
-import { Eye, ChevronLeft, ChevronRight, Loader2, User, Phone, FileText } from 'lucide-react';
+import { Eye, ChevronLeft, ChevronRight, Loader2, User, Phone, FileText, TicketPercent } from 'lucide-react';
 import { TableSkeleton } from '@/components/admin-skeletons';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -93,6 +93,10 @@ export default function Pedidos() {
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [stats, setStats] = useState({ todos: 0, pendiente: 0, enviado: 0, completado: 0, cancelado: 0 });
+  // Filtro "solo pedidos con cupón" y resumen de descuentos aplicados
+  const [conCupon, setConCupon] = useState(false);
+  const [cuponesResumen, setCuponesResumen] = useState<any[]>([]);
+  const [cuponesTotales, setCuponesTotales] = useState({ pedidos: 0, descuento: 0 });
   const [newOrdersCount, setNewOrdersCount] = useState<number>(0);
   const [pagosMap, setPagosMap] = useState<Record<number, any[]>>({});
   const [searchTerm, setSearchTerm] = useState('');
@@ -179,8 +183,23 @@ export default function Pedidos() {
         completado: res.Completado || 0,
         cancelado: res.Cancelado || 0
       });
+      setCuponesTotales({
+        pedidos: Number(res.CuponesAplicados || 0),
+        descuento: Number(res.DescuentoCuponTotal || 0),
+      });
     } catch (e) {
       console.error('Error cargando estadísticas', e);
+    }
+  };
+
+  // Resumen de descuentos por cupón: cuántos pedidos y cuánto se descontó
+  const fetchCuponesResumen = async () => {
+    try {
+      const res = await getPedidosCuponesResumen();
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      setCuponesResumen(list);
+    } catch (e) {
+      console.error('Error cargando resumen de cupones', e);
     }
   };
 
@@ -193,8 +212,9 @@ export default function Pedidos() {
         // Cargar estadísticas solo si es la primera carga o si es necesario refrescar
         // (Opcional: mover a un useEffect separado si no queremos recargar stats al paginar)
         await fetchStats();
+        await fetchCuponesResumen();
 
-        const res = await getPedidosPaginated(page, limit, selectedStatus || undefined);
+        const res = await getPedidosPaginated(page, limit, selectedStatus || undefined, conCupon);
         // Handle response structure: { data: [], total: 50, page: 1, limit: 12, totalPages: 5 }
         const list = Array.isArray(res) ? res : (res?.data || []);
         setPedidos(sortPedidosByDateDesc(list));
@@ -218,7 +238,7 @@ export default function Pedidos() {
         setLoading(false);
       }
     })();
-  }, [navigate, page, limit, selectedStatus, searchTerm]);
+  }, [navigate, page, limit, selectedStatus, searchTerm, conCupon]);
 
   // Obtener pedidos paginados o resultados de búsqueda
   useEffect(() => {
@@ -249,13 +269,16 @@ export default function Pedidos() {
           const shown = selectedStatus
             ? list.filter((p: any) => String(p?.estado || p?.status || '').toLowerCase() === selectedStatus.toLowerCase())
             : list;
-          setPedidos(shown);
-          setTotalOrders(shown.length);
+          const shownFinal = conCupon
+            ? shown.filter((p: any) => Boolean(p?.cupon_codigo))
+            : shown;
+          setPedidos(shownFinal);
+          setTotalOrders(shownFinal.length);
           setTotalPages(1);
         } else {
           setSearchResults([]);
           // Si no hay búsqueda, usar la paginación normal
-          const { data, total } = await getPedidosPaginated(page, limit, selectedStatus);
+          const { data, total } = await getPedidosPaginated(page, limit, selectedStatus, conCupon);
           setPedidos(data);
           setTotalOrders(total);
           setTotalPages(Math.ceil(total / limit));
@@ -279,7 +302,7 @@ export default function Pedidos() {
     }, 300); // Pequeño debounce para evitar múltiples búsquedas rápidas
 
     return () => clearTimeout(debounceTimer);
-  }, [page, limit, selectedStatus, searchTerm]);
+  }, [page, limit, selectedStatus, searchTerm, conCupon]);
 
   // Filtrado local ya no es necesario porque filtramos en servidor
   const visiblePedidos = pedidos;
@@ -377,6 +400,23 @@ export default function Pedidos() {
   };
   const fmtProductosCount = (p: any) => Array.isArray(p?.productos) ? p.productos.length : 0;
   const fmtEstado = (p: any) => p?.estado || p?.status || '-';
+  // Etiqueta del cupón aplicado: "MIRRA10 · -$10.00"
+  const fmtCupon = (p: any) => {
+    const codigo = String(p?.cupon_codigo || '').trim();
+    if (!codigo) return '';
+    const descuento = roundMoney(p?.descuento_cupon ?? 0);
+    if (descuento <= 0) return codigo;
+    return `${codigo} · -$${descuento.toFixed(2)}`;
+  };
+  // Porcentaje del cupón aplicado (para el detalle)
+  const fmtCuponPct = (p: any) => {
+    const pct = Number(p?.cupon_descuento_porcentaje);
+    if (Number.isFinite(pct) && pct > 0) return `${pct}%`;
+    const base = roundMoney(p?.total_base ?? 0);
+    const desc = roundMoney(p?.descuento_cupon ?? 0);
+    if (base > 0 && desc > 0) return `${Math.round((desc / base) * 100)}%`;
+    return null;
+  };
   const fmtTotal = (p: any) => {
     const base = roundMoney(
       p?.total_base ??
@@ -714,6 +754,21 @@ export default function Pedidos() {
     const recargos = roundMoney(selectedPedido?.total_recargos ?? 0);
     const final = roundMoney(selectedPedido?.total_final ?? selectedPedido?.total ?? base);
     return { base, descuentos, recargos, final };
+  }, [selectedPedido]);
+
+  // Datos del cupón aplicado al pedido abierto
+  const cuponDetalle = React.useMemo(() => {
+    if (!selectedPedido) return null;
+    const codigo = String(selectedPedido?.cupon_codigo || '').trim();
+    const descuento = roundMoney(selectedPedido?.descuento_cupon ?? 0);
+    if (!codigo || descuento <= 0) return null;
+    return {
+      codigo,
+      descuento,
+      pct: fmtCuponPct(selectedPedido),
+      colaborador: selectedPedido?.cupon_colaborador_nombre || null,
+      descripcion: selectedPedido?.cupon_descripcion || null,
+    };
   }, [selectedPedido]);
 
   const tasaActual = fmtTasa(selectedPedido);
@@ -1711,8 +1766,45 @@ export default function Pedidos() {
                 {s} <span className="text-xs opacity-60">{countFor(s)}</span>
               </button>
             ))}
+            <button
+              className={`flex items-center gap-1.5 px-3 py-[5px] rounded-[7px] text-sm transition-colors duration-150 min-h-[36px] ${conCupon ? 'bg-foreground text-background font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => { setConCupon((prev) => !prev); setPage(1); }}
+              title="Mostrar solo pedidos con cupón aplicado"
+            >
+              <TicketPercent className="w-3.5 h-3.5" />
+              Con cupón <span className="text-xs opacity-60">{cuponesTotales.pedidos}</span>
+            </button>
           </div>
         </div>
+
+        {/* Resumen de descuentos aplicados por cupón */}
+        {cuponesTotales.pedidos > 0 && (
+          <div className="rounded-[10px] border border-border bg-card px-4 py-3">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Descuentos por cupón</p>
+                <p className="text-lg font-semibold tabular-nums">
+                  ${roundMoney(cuponesTotales.descuento).toFixed(2)}
+                  <span className="text-xs font-normal text-muted-foreground ml-1.5">
+                    en {cuponesTotales.pedidos} {cuponesTotales.pedidos === 1 ? 'pedido' : 'pedidos'}
+                  </span>
+                </p>
+              </div>
+              {cuponesResumen.map((c: any) => (
+                <div key={`${c.cupon_id ?? 's/c'}-${c.codigo}`} className="text-xs">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-medium text-amber-800">
+                    <TicketPercent className="w-3 h-3" />
+                    {c.codigo}
+                    {c.descuento_porcentaje != null && ` · ${c.descuento_porcentaje}%`}
+                  </span>
+                  <span className="ml-1.5 text-muted-foreground tabular-nums">
+                    {c.pedidos} {c.pedidos === 1 ? 'pedido' : 'pedidos'} · -${roundMoney(c.descuento_total).toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <TableSkeleton columns={8} rows={10} />
@@ -1746,6 +1838,12 @@ export default function Pedidos() {
                           )
                         )}
                         <span className="text-xs text-muted-foreground">{fmtProductosCount(p)} prod.</span>
+                        {fmtCupon(p) && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[10.5px] font-medium text-amber-800">
+                            <TicketPercent className="w-3 h-3" />
+                            {fmtCupon(p)}
+                          </span>
+                        )}
                       </div>
                       <div className="mt-3 flex items-center justify-between">
                         <div>
@@ -1810,6 +1908,12 @@ export default function Pedidos() {
                           <TableCell className="text-right">
                             <div className="text-sm font-medium tabular-nums">{totalParts.usd}</div>
                             {totalParts.bs && <div className="text-[11px] text-muted-foreground tabular-nums mt-0.5">{totalParts.bs}</div>}
+                            {fmtCupon(p) && (
+                              <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-[1px] text-[10.5px] font-medium text-amber-800">
+                                <TicketPercent className="w-3 h-3" />
+                                {fmtCupon(p)}
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell className="text-center">
                             <Button size="sm" variant="ghost" className="h-7 w-7 p-0 rounded-md text-muted-foreground hover:text-foreground" onClick={(e) => { e.stopPropagation(); openDetalle(p.id); }}>
@@ -1914,6 +2018,15 @@ export default function Pedidos() {
                   <span>Cargando...</span>
                 )}
               </DialogDescription>
+              {cuponDetalle && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <TicketPercent className="w-4 h-4 shrink-0" />
+                  <span className="font-medium">Cupón {cuponDetalle.codigo} aplicado</span>
+                  {cuponDetalle.pct && <span>· {cuponDetalle.pct} de descuento</span>}
+                  <span>· -{cuponDetalle.descuento.toFixed(2)}</span>
+                  {cuponDetalle.colaborador && <span>· {cuponDetalle.colaborador}</span>}
+                </div>
+              )}
             </DialogHeader>
 
             <div id="modal-scroll-container" className={`flex-1 overflow-y-auto p-4 sm:p-6 bg-gray-50/50 space-y-6 min-h-0 ${showPaymentInline ? 'hidden' : ''}`}>
@@ -2153,6 +2266,11 @@ export default function Pedidos() {
                       <div className="text-right space-y-1">
                         <div className="text-sm text-muted-foreground">Subtotal</div>
                         <div className="text-sm font-medium">${persistedTotals.base.toFixed(2)}</div>
+                        {cuponDetalle && (
+                          <div className="text-sm text-amber-700">
+                            - Cupón {cuponDetalle.codigo}{cuponDetalle.pct ? ` (${cuponDetalle.pct})` : ''}: ${cuponDetalle.descuento.toFixed(2)}
+                          </div>
+                        )}
                         {persistedTotals.descuentos > 0 && (
                           <div className="text-sm text-red-500">- Descuentos: ${persistedTotals.descuentos.toFixed(2)}</div>
                         )}

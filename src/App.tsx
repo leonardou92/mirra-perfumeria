@@ -24,6 +24,7 @@ import Categorias from "./pages/Categorias";
 import WhatsappAdmin from "./pages/WhatsappAdmin";
 import CintilloMensajes from "./pages/CintilloMensajes";
 import MarketingSection from "./pages/MarketingSection";
+import Cupones from "./pages/Cupones";
 import Reportes from "./pages/Reportes";
 import Rastreo from "./pages/Rastreo";
 import NotFound from "./pages/NotFound";
@@ -98,7 +99,7 @@ const App = () => (
               <Route path="/admin/whatsapp" element={<WhatsappAdmin />} />
               <Route path="/admin/cintillo" element={<CintilloMensajes />} />
               <Route path="/admin/marketing/destacados" element={<MarketingSection title="Destacados" />} />
-              <Route path="/admin/marketing/cupones" element={<MarketingSection title="Cupones" />} />
+              <Route path="/admin/marketing/cupones" element={<Cupones />} />
             </Route>
 
             <Route element={<ModuleProtectedRoute moduleKey="marcas" />}>

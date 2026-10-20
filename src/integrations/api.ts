@@ -131,9 +131,10 @@ export async function getVentasPorPresentacion(fechaInicio?: string, fechaFin?: 
   return apiFetch(`/pedidos-venta/reportes-presentaciones${qs}`);
 }
 
-export async function getPedidosPaginated(page = 1, limit = 12, estado?: string) {
+export async function getPedidosPaginated(page = 1, limit = 12, estado?: string, conCupon?: boolean) {
   let url = `/pedidos-venta/paginated?page=${page}&limit=${limit}`;
   if (estado) url += `&estado=${encodeURIComponent(estado)}`;
+  if (conCupon) url += `&con_cupon=true`;
   return apiFetch(url);
 }
 
@@ -146,6 +147,11 @@ export async function searchPedidos(term: string) {
 
 export async function getPedidosStats() {
   return apiFetch('/pedidos-venta/stats');
+}
+
+// Resumen de descuentos aplicados por cupón (pedidos y monto descontado)
+export async function getPedidosCuponesResumen() {
+  return apiFetch('/pedidos-venta/cupones-resumen');
 }
 export async function getPedidoVenta(id: number) {
   return apiFetch(`/pedidos-venta/${id}`);
@@ -659,6 +665,69 @@ export async function getClientesTopResumen(limit = 10, pedidosLimit = 5, fechaI
   return apiFetch(`/pedidos-venta/clientes-top-resumen?${params.toString()}`);
 }
 
+// Cupones y colaboradores
+export async function getCupones() {
+  return apiFetch('/cupones');
+}
+
+export async function createCupon(data: any) {
+  return apiFetch('/cupones', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateCupon(id: number, data: any) {
+  return apiFetch(`/cupones/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function setCuponActivo(id: number, activo: boolean) {
+  return apiFetch(`/cupones/${id}/estado`, { method: 'PATCH', body: JSON.stringify({ activo }) });
+}
+
+export async function getUsosCupon(id: number) {
+  return apiFetch(`/cupones/${id}/usos`);
+}
+
+export async function getColaboradores() {
+  return apiFetch('/cupones/colaboradores');
+}
+
+export async function createColaborador(data: any) {
+  return apiFetch('/cupones/colaboradores', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateColaborador(id: number, data: any) {
+  return apiFetch(`/cupones/colaboradores/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function setColaboradorActivo(id: number, activo: boolean) {
+  return apiFetch(`/cupones/colaboradores/${id}/estado`, { method: 'PATCH', body: JSON.stringify({ activo }) });
+}
+
+// Validación pública de cupón (carrito del sitio público, sin autenticación)
+export async function validarCuponPublic(codigo: string) {
+  const clean = String(codigo || '').trim();
+  if (!clean) throw new Error('Ingresa el código del cupón');
+
+  const res = await fetch(`${API_URL}/cupones/validar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: clean }),
+  });
+
+  let body: any = {};
+  try {
+    body = await res.json();
+  } catch (e) {
+    body = {};
+  }
+
+  if (!res.ok) {
+    const err = new Error(body?.error || 'Cupón inválido');
+    (err as any).status = res.status;
+    throw err;
+  }
+  return body;
+}
+
 // Obtener pagos por pedido: GET /api/pedidos-venta/:id/pagos
 export async function getPagosByPedido(id: number) {
   try {
@@ -1170,6 +1239,10 @@ export async function createPedidoVentaPublic(data: any) {
     return base;
   });
   if (payload.tasa_cambio_monto !== undefined) finalPayload.tasa_cambio_monto = payload.tasa_cambio_monto;
+  // Cupón aplicado en el carrito: el backend valida el código y calcula el descuento
+  if (payload.cupon_codigo !== undefined && payload.cupon_codigo !== null && String(payload.cupon_codigo).trim() !== '') {
+    finalPayload.cupon_codigo = String(payload.cupon_codigo).trim().toUpperCase();
+  }
 
   // Si el frontend solicita preservar snapshots (productos) y proporciona productos con snapshot data,
   // incluirlos y calcular total si es posible.

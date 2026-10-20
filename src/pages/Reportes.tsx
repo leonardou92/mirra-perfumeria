@@ -15,7 +15,7 @@ import {
   getVentasPorPresentacion,
 } from '@/integrations/api';
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, TicketPercent } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip as RechartsTooltip, Legend } from 'recharts';
 
@@ -431,6 +431,9 @@ export default function Reportes() {
     let dailySales = 0;
     let monthSales = 0;
     let monthCompletedOrders = 0;
+    let descuentosTotal = 0;
+    let pedidosConCupon = 0;
+    const descuentosPorCodigo: Record<string, { descuento: number; pedidos: number }> = {};
     const now = new Date();
     const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
     const thisMonth = now.getMonth();
@@ -455,8 +458,7 @@ export default function Reportes() {
         const qty = parseNumber(item?.cantidad ?? 0);
         const price = parseNumber(item?.precio_venta ?? item?.subtotal ?? 0);
         const subtotal = parseNumber(item?.subtotal ?? qty * price);
-        orderTotal += subtotal;
-        const key = String(item?.producto_id ?? item?.id ?? item?.nombre_producto ?? 'desconocido');
+        orderTotal += subtotal;        const key = String(item?.producto_id ?? item?.id ?? item?.nombre_producto ?? 'desconocido');
         const nombre = String(item?.nombre_producto || item?.nombre || `Producto ${key}`);
         const productoIdNum = Number(item?.producto_id ?? item?.id);
         const nombreInventario = Number.isFinite(productoIdNum)
@@ -504,6 +506,18 @@ export default function Reportes() {
       customerCurrent.pedidos += 1;
       customerCurrent.monto += orderTotal;
       customerSales[customerKey] = customerCurrent;
+
+      // Descuento aplicado por cupón en este pedido
+      const descuentoCupon = parseNumber(pedido?.descuento_cupon ?? 0);
+      if (descuentoCupon > 0) {
+        descuentosTotal += descuentoCupon;
+        pedidosConCupon += 1;
+        const codigo = String(pedido?.cupon_codigo || 'SIN CÓDIGO');
+        const actual = descuentosPorCodigo[codigo] || { descuento: 0, pedidos: 0 };
+        actual.descuento += descuentoCupon;
+        actual.pedidos += 1;
+        descuentosPorCodigo[codigo] = actual;
+      }
     }
 
     const salesTotal = Object.values(monthlySales).reduce((acc, n) => acc + n, 0);
@@ -657,6 +671,9 @@ export default function Reportes() {
       totalCostoEstimado,
       utilidadEstimada,
       ticketPromedio,
+      descuentosTotal,
+      pedidosConCupon,
+      descuentosPorCodigo,
     };
   }, [clientesResumen, pedidos, presentaciones, productos, ventasMetodo, fechaInicio, fechaFin]);
 
@@ -776,6 +793,27 @@ export default function Reportes() {
           <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Presentación más vendida</p><p className="mt-2 text-sm font-medium">{metrics.topPresentation ? `${metrics.topPresentation.presentacion} (${metrics.topPresentation.cantidad} uds)` : 'Sin datos'}</p></CardContent></Card>
           <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Tasa de cancelación</p><p className="mt-2 text-2xl font-semibold tabular-nums">{metrics.cancelRate.toFixed(1)}%</p></CardContent></Card>
           <Card><CardContent className="p-5"><p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Riesgo de inventario</p><p className="mt-2 text-2xl font-semibold tabular-nums">{metrics.stockRiskRate.toFixed(1)}%</p></CardContent></Card>
+          <Card className={metrics.pedidosConCupon > 0 ? 'border-amber-200 bg-amber-50/40' : undefined}>
+            <CardContent className="p-5">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Descuentos aplicados</p>
+              <p className="mt-2 text-2xl font-semibold tabular-nums text-amber-700">${metrics.descuentosTotal.toFixed(2)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {metrics.pedidosConCupon > 0
+                  ? `en ${metrics.pedidosConCupon} ${metrics.pedidosConCupon === 1 ? 'pedido' : 'pedidos'} con cupón`
+                  : 'Sin cupones aplicados'}
+              </p>
+              {Object.keys(metrics.descuentosPorCodigo).length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {Object.entries(metrics.descuentosPorCodigo).map(([codigo, data]) => (
+                    <span key={codigo} className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10.5px] font-medium text-amber-800">
+                      <TicketPercent className="w-3 h-3" />
+                      {codigo} · -${data.descuento.toFixed(2)}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       );
     }
