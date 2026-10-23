@@ -20,7 +20,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/use-auth";
 import useCart from "@/hooks/use-cart";
 
-type ModuleKey = 'dashboard' | 'tasas_cambio' | 'bancos' | 'marcas' | 'categorias' | 'almacenes' | 'productos' | 'formulas' | 'pedidos' | 'usuarios';
+type ModuleKey = 'dashboard' | 'tasas_cambio' | 'bancos' | 'marcas' | 'categorias' | 'almacenes' | 'productos' | 'formulas' | 'pedidos' | 'usuarios' | 'influencer';
 
 interface MenuItem {
   title: string;
@@ -70,6 +70,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { title: "Destacados", url: "/admin/marketing/destacados", icon: Star, module: 'usuarios' },
       { title: "Cupones", url: "/admin/marketing/cupones", icon: TicketPercent, module: 'usuarios' },
+      { title: "Mis métricas", url: "/influencer", icon: BarChart3, module: 'influencer' },
     ],
   },
   {
@@ -96,7 +97,7 @@ export function AppSidebar() {
   const { open } = useSidebar();
   const navigate = useNavigate();
   const location = useLocation();
-    const { logout, token, userId } = useAuth();
+    const { logout, token, userId, isInfluencer } = useAuth();
     const { clear: clearCart } = useCart();
     const { hasPermission, loadUserPermissions } = usePermissions();
 
@@ -112,7 +113,7 @@ export function AppSidebar() {
         if (typeof role === 'string') {
           isAdmin = role.toLowerCase() === 'admin';
         } else if (Array.isArray(role)) {
-          isAdmin = role.map((r: any) => String(r).toLowerCase()).includes('admin');
+          isAdmin = role.some((roleItem: unknown) => String(roleItem).toLowerCase() === 'admin');
         }
       }
     }
@@ -147,6 +148,8 @@ export function AppSidebar() {
   };
 
   const isItemVisible = (item: MenuItem): boolean => {
+    if (isInfluencer) return item.module === 'influencer';
+    if (item.module === 'influencer') return isInfluencer;
     if (item.module === 'usuarios') {
       return isAdmin || hasPermission('usuarios');
     }
@@ -194,7 +197,7 @@ export function AppSidebar() {
                             <SidebarMenuButton
                               onClick={() => navigate(item.url)}
                               isActive={isActive}
-                              className={`flex items-center gap-3 px-3 py-2 min-h-[44px] rounded-md transition-colors duration-150 ${isActive ? activeItemClass : inactiveItemClass}`}
+                              className={`flex items-center gap-3 px-3 py-2 min-h-[44px] rounded-md transition-colors duration-150 ${isActive ? item.module === 'influencer' ? 'relative bg-amber-100 pl-[calc(0.75rem+3px)] font-medium text-amber-950 data-[active=true]:bg-amber-100 data-[active=true]:text-amber-950 before:absolute before:left-0 before:top-1/2 before:h-[18px] before:w-[3px] before:-translate-y-1/2 before:rounded-r-full before:bg-amber-700' : activeItemClass : inactiveItemClass}`}
                               title={!open ? item.title : undefined}
                             >
                               <span className="flex items-center justify-center w-5 h-5 shrink-0">
