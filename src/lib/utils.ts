@@ -21,11 +21,14 @@ export function getImageUrl(obj?: any, fallbackIndex?: number): string | undefin
     return fallbackImages[index];
   }
 
+  // Si ya es una URL local de blob o data, devolverla tal cual
+  if (/^data:|^blob:/i.test(raw)) return raw;
+
   // Convertir HTTPS a HTTP para evitar problemas de certificado en desarrollo
   const httpUrl = raw.replace('https://', 'http://');
 
-  // Si ya es una URL absoluta o data/blob, devolver tal cual
-  if (/^(https?:)?\/\//i.test(httpUrl) || /^data:|^blob:/i.test(httpUrl)) return httpUrl;
+  // Si ya es una URL absoluta, devolver tal cual
+  if (/^(https?:)?\/\//i.test(httpUrl)) return httpUrl;
 
   // Si es una ruta relativa (empieza con '/'), prefijar con la base del API o el origen
   if (httpUrl.startsWith('/')) {
@@ -57,22 +60,34 @@ export function getImageUrl(obj?: any, fallbackIndex?: number): string | undefin
 // devuelve el texto crudo.
 export function parseApiError(err: unknown): string {
   if (!err) return 'Error desconocido';
-  if (err instanceof Error) {
-    const raw = err.message || String(err);
-    // intentar parsear JSON
+
+  const raw = err instanceof Error
+    ? (err.message || String(err))
+    : typeof err === 'string'
+      ? err
+      : (() => { try { return JSON.stringify(err); } catch { return 'Error desconocido'; } })();
+
+  // Si el raw en sí parece JSON, intentar extraer message/error
+  const tryParse = (s: string): string => {
     try {
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(s);
       if (parsed && typeof parsed === 'object') {
-        if (parsed.message) return String(parsed.message);
-        if (parsed.error) return String(parsed.error);
+        const msg = parsed.message || parsed.error || parsed.detail || parsed.msg;
+        if (msg) return String(msg);
+        // JSON sin campo reconocido → fallback genérico
+        return 'Error del servidor';
       }
-    } catch (e) {
-      // no es JSON, devolver raw
-    }
-    return raw;
-  }
-  if (typeof err === 'string') return err;
-  try { return String(err); } catch (e) { return 'Error desconocido'; }
+    } catch { /* no es JSON */ }
+    return s;
+  };
+
+  return tryParse(raw);
+}
+
+import { toast } from 'sonner';
+export function toastError(err: unknown, fallback = 'Ocurrió un error') {
+  const msg = parseApiError(err) || fallback;
+  toast.error(msg);
 }
 
 // Calcula el precio a mostrar para un producto o una variante (tamaño).

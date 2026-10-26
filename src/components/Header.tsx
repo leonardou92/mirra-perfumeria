@@ -1,22 +1,40 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, Menu, X } from 'lucide-react';
+import { ShoppingCart, Menu, X, Truck } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
-import { getCatalogoPaginated } from '@/integrations/api';
+import { getCatalogoPaginated, getMensajesCintilloActivos, type CintilloMensaje } from '@/integrations/api';
 
 interface HeaderProps {
   cartItemsCount: number;
+  cartPulseKey: number;
   onCartClick: () => void;
 }
 
-export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
+export function Header({ cartItemsCount, cartPulseKey, onCartClick }: HeaderProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [announcementMessages, setAnnouncementMessages] = useState<CintilloMensaje[]>([]);
   const location = useLocation();
+
+  useEffect(() => {
+    let mounted = true;
+    getMensajesCintilloActivos()
+      .then((messages) => {
+        if (mounted) setAnnouncementMessages(Array.isArray(messages) ? messages : []);
+      })
+      .catch((error) => console.error('Error cargando mensajes del cintillo', error));
+    return () => { mounted = false; };
+  }, []);
 
   // Cerrar menú al cambiar de ruta
   useEffect(() => {
     setIsMenuOpen(false);
   }, [location]);
+
+  // Bloquear scroll del body cuando el menú está abierto
+  useEffect(() => {
+    document.body.style.overflow = isMenuOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [isMenuOpen]);
 
   // Efecto para el scroll
   useEffect(() => {
@@ -88,15 +106,48 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
       className={`fixed w-full top-0 left-0 z-50 bg-gradient-to-r from-[#707070]/90 via-[#878787]/90 to-[#a0a0a0]/90 backdrop-blur-sm shadow-lg transition-all duration-300 ${scrolled ? 'py-1' : 'py-0'
         }`}
     >
+      {announcementMessages.length > 0 && <div
+        className="h-8 overflow-hidden border-b border-primary-700 bg-primary-600 text-white"
+        role="region"
+        aria-label="Novedades de Mirra Perfumería"
+      >
+        <div className={`announcement-marquee flex h-full w-max items-center ${announcementMessages.length === 1 ? 'announcement-marquee--single' : ''}`}>
+          {announcementMessages.length === 1 ? (
+            <div className="flex shrink-0 items-center px-4">
+              <span className="whitespace-nowrap font-montserrat text-[10px] font-semibold uppercase tracking-wider sm:text-xs">
+                {announcementMessages[0].texto}
+              </span>
+            </div>
+          ) : (
+            [0, 1].map((copy) => (
+              <div
+                key={copy}
+                className="flex min-w-[100vw] shrink-0 items-center justify-around gap-8 px-4"
+                aria-hidden={copy === 1}
+              >
+                {announcementMessages.map((message) => (
+                  <span key={message.id} className="whitespace-nowrap font-montserrat text-[10px] font-semibold uppercase tracking-wider sm:text-xs">
+                    {message.texto}
+                  </span>
+                ))}
+              </div>
+            ))
+          )}
+        </div>
+      </div>}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-16 md:h-20">
           {/* Logo y nombre */}
           <div className="flex items-center space-x-3">
-            <Link to="/" className="flex items-center space-x-3">
-              <div className=" bg-white/80 rounded-full shadow-lg ring-2 ring-[#ca9e67] ring-offset-2 backdrop-blur-sm">
+            <Link to="/" className="flex items-center space-x-3" aria-label="Mirra Perfumería · Inicio">
+              <div className="bg-white/80 rounded-full shadow-lg ring-2 ring-[#ca9e67] ring-offset-2 backdrop-blur-sm overflow-hidden">
                 <img
                   src="/logoColor.png"
-                  alt="Mirra Perfumería"
+                  alt="Logo de Mirra Perfumería, marca de fragancias selectas"
+                  width={56}
+                  height={56}
+                  loading="eager"
+                  decoding="async"
                   className="w-14 h-14 md:w-14 md:h-14 rounded-full object-cover"
                 />
               </div>
@@ -134,6 +185,10 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
                   <div className="px-4 py-2 text-gray-600">Cargando...</div>
                 ) : (
                   <div className="px-2 py-1 max-h-64 overflow-auto">
+                    {/* Opción Todos */}
+                    <Link to="/" className="block px-4 py-1 text-gray-700 hover:bg-gray-100 rounded">
+                      Todos
+                    </Link>
                     {categoriesList.map((c: any) => {
                       const name = c.nombre ?? c.name ?? '';
                       const slug = (c.slug ?? (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
@@ -153,6 +208,13 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
           {/* Botones de acción */}
           <div className="flex items-center space-x-2 md:space-x-4">
             <Link
+              to="/rastreo"
+              className="hidden sm:inline-flex items-center gap-1.5 justify-center border border-white/60 hover:bg-white/20 text-white px-3 py-2 rounded-lg font-medium transition-all duration-300 whitespace-nowrap text-sm"
+            >
+              <Truck className="w-4 h-4" />
+              Rastrear
+            </Link>
+            <Link
               to="/"
               className="hidden sm:inline-flex items-center justify-center bg-white/90 hover:bg-white text-[#CA9E67] px-4 py-2 rounded-lg font-medium transition-all duration-300 shadow-md hover:shadow-lg hover:scale-105 whitespace-nowrap text-sm md:text-base"
             >
@@ -160,13 +222,14 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
             </Link>
 
             <button
+              key={cartPulseKey}
               onClick={onCartClick}
-              className="relative p-2 text-white/90 hover:text-white rounded-full hover:bg-white/20 transition-all duration-300"
+              className="relative p-2 text-white/90 hover:text-white rounded-full hover:bg-white/20 transition-all duration-300 cart-button-pop"
               aria-label="Carrito de compras"
             >
               <ShoppingCart className="w-5 h-5 md:w-6 md:h-6" />
               {cartItemsCount > 0 && (
-                <span className="absolute -top-1 -right-1 bg-[#CA9E67] text-white text-[10px] md:text-xs font-bold rounded-full w-4 h-4 md:w-5 md:h-5 flex items-center justify-center">
+                <span className="absolute -top-1 -right-1 bg-[#CA9E67] text-white text-[10px] md:text-xs font-bold rounded-full w-4 h-4 md:w-5 md:h-5 flex items-center justify-center cart-badge-pop">
                   {cartItemsCount > 9 ? '9+' : cartItemsCount}
                 </span>
               )}
@@ -186,55 +249,66 @@ export function Header({ cartItemsCount, onCartClick }: HeaderProps) {
 
       {/* Menú móvil */}
       <div
-        className={`md:hidden bg-white/95 backdrop-blur-sm transition-all duration-300 ease-in-out overflow-hidden ${isMenuOpen ? 'max-h-96 py-4 border-t border-white/20' : 'max-h-0 py-0'
+        className={`md:hidden bg-white shadow-lg transition-all duration-300 ease-in-out overflow-y-auto ${isMenuOpen ? 'max-h-[calc(100svh-5rem)] border-t border-gray-200' : 'max-h-0 overflow-hidden'
           }`}
       >
-        <div className="px-4 space-y-2">
+        <div className="px-4 py-3 space-y-1">
           <Link
             to="/"
-            className="block px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+            className="block px-3 py-2.5 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
           >
             Inicio
           </Link>
           <Link
             to="/about"
-            className="block px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+            className="block px-3 py-2.5 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
           >
             Sobre Nosotros
           </Link>
           <Link
             to="/pedidos"
-            className="block px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+            className="block px-3 py-2.5 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
           >
             Pedidos
           </Link>
-          <Link
-            to="#catalog"
-            className="block px-4 py-3 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
-          >
-            Nuestros Productos
-          </Link>
-          {/* Categorías en móvil (misma fuente que el dropdown 'Productos') */}
-          <div className="block px-4 py-3">
+
+          {/* Sección Productos */}
+          <div>
+            <p className="px-3 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
+              Productos
+            </p>
             {catsLoading ? (
-              <div className="text-gray-600 px-2 py-1">Cargando categorías...</div>
+              <div className="px-3 py-2 text-sm text-gray-500">Cargando...</div>
             ) : (
-              <div className="space-y-2">
+              <>
+                <Link to="/" className="block px-3 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm transition-colors">
+                  Todos
+                </Link>
                 {categoriesList.map((c: any) => {
                   const name = c.nombre ?? c.name ?? '';
                   const slug = (c.slug ?? (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
                   return (
-                    <Link key={c.__key ?? c.id ?? slug} to={`/categoria/${slug}`} className="block px-2 py-2 text-gray-700 hover:bg-gray-100 rounded">
+                    <Link key={c.__key ?? c.id ?? slug} to={`/categoria/${slug}`} className="block px-3 py-2 text-gray-700 hover:bg-gray-100 rounded-lg text-sm transition-colors">
                       {name}
                     </Link>
                   );
                 })}
-              </div>
+              </>
             )}
           </div>
+
+          <div className="h-px bg-gray-100 my-1" />
+
+          <Link
+            to="/rastreo"
+            className="flex items-center gap-2 px-3 py-2.5 text-gray-800 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+          >
+            <Truck className="w-4 h-4" />
+            Rastrear Pedido
+          </Link>
           <Link
             to="/"
-            className="block px-4 py-3 text-center bg-[#CA9E67] text-white rounded-lg font-medium hover:bg-[#b58a53] transition-colors mt-2"
+            className="block px-3 py-2.5 text-center bg-[#CA9E67] text-white rounded-lg font-medium hover:bg-[#b58a53] transition-colors"
           >
             Comprar Ahora
           </Link>

@@ -1,10 +1,14 @@
 import React, { useEffect, useState } from 'react';
+import { TableSkeleton } from '@/components/admin-skeletons';
 import { Layout } from '@/components/Layout';
 import { Button } from '@/components/ui/button';
-import { Table, TableHeader, TableBody, TableRow, TableCell } from '@/components/ui/table';
+import { Table, TableHeader, TableBody, TableRow, TableCell, TableHead } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { apiFetch } from '@/integrations/api';
 import { useAuth } from '@/hooks/use-auth';
+import { Plus, Loader2 } from 'lucide-react';
 
 // Página básica para CRUD de usuarios y gestión de permisos por módulo.
 export default function Usuarios() {
@@ -303,123 +307,166 @@ export default function Usuarios() {
 
   return (
     <Layout>
-      <div className="p-4">
-        <h1 className="text-2xl font-semibold mb-4">Usuarios</h1>
-        <div className="mb-4">
-          <Button onClick={loadUsers}>Recargar lista</Button>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight">Usuarios</h2>
+            <p className="text-sm text-muted-foreground">Gestión de usuarios y permisos</p>
+          </div>
+          <Button className="gap-2 h-11 px-4" onClick={openCreateUser}>
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">Crear usuario</span>
+            <span className="sm:hidden">Nuevo</span>
+          </Button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="md:col-span-2">
-            <div className="bg-white border rounded p-4">
-              <div className="font-medium mb-2">Listado</div>
-              <div className="mb-2 flex items-center justify-between">
-                <div />
-                <div>
-                  <Button size="sm" onClick={openCreateUser} className="mr-2">Crear usuario</Button>
-                  <Button size="sm" onClick={loadUsers}>Recargar</Button>
-                </div>
-              </div>
-              <Table>
-                <TableHeader>
-                  <tr>
-                    <th>Id</th>
-                    <th>Nombre / Email</th>
-                    <th>Rol</th>
-                    <th>Acciones</th>
-                  </tr>
-                </TableHeader>
-                <TableBody>
-                  {loading ? (
-                    <TableRow><TableCell>...</TableCell></TableRow>
-                  ) : (
-                    users.map((u: any) => (
-                      <TableRow key={u.id}>
-                        <TableCell>{u.id}</TableCell>
-                        <TableCell>{u.nombre || u.name || u.email}</TableCell>
-                        <TableCell>{u.rol || u.role || '—'}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            {isAdmin && <Button size="sm" onClick={() => loadPermisosFor(u)}>Permisos</Button>}
+
+        {loading ? (
+          <TableSkeleton columns={4} />
+        ) : (
+          <>
+            {/* ── Móvil: lista de tarjetas nativas ── */}
+            <div className="flex flex-col gap-3 sm:hidden">
+              {users.map((u: any) => (
+                <Card key={u.id}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold truncate">{u.nombre || u.name || u.email}</p>
+                        <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+                        <span className="mt-1 inline-block rounded-full bg-muted px-2 py-0.5 text-xs capitalize">
+                          {u.rol || u.role || 'user'}
+                        </span>
+                      </div>
+                      <span className="text-xs tabular-nums text-muted-foreground shrink-0">#{u.id}</span>
+                    </div>
+                    <div className="mt-3 flex gap-2">
+                      {isAdmin && (
+                        <Button size="sm" variant="outline" className="flex-1 h-10" onClick={() => loadPermisosFor(u)}>
+                          Permisos
+                        </Button>
+                      )}
+                      <Button size="sm" variant="outline" className="flex-1 h-10" onClick={() => openEditUser(u)}>
+                        Editar
+                      </Button>
+                      <Button size="sm" variant="destructive" className="flex-1 h-10" onClick={() => deleteUser(u)}>
+                        Eliminar
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+              {users.length === 0 && (
+                <p className="py-8 text-center text-sm text-muted-foreground">No hay usuarios registrados.</p>
+              )}
+            </div>
+
+            {/* ── Desktop: tabla ── */}
+            <Card className="hidden sm:block">
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">ID</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Nombre / Email</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Rol</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3 text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {users.map((u: any) => (
+                      <TableRow key={u.id} className="hover:bg-muted/40 transition-colors duration-150">
+                        <TableCell className="text-xs tabular-nums text-muted-foreground">#{u.id}</TableCell>
+                        <TableCell className="font-medium">{u.nombre || u.name || u.email}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{u.rol || u.role || '—'}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            {isAdmin && <Button size="sm" variant="outline" onClick={() => loadPermisosFor(u)}>Permisos</Button>}
                             <Button size="sm" variant="outline" onClick={() => openEditUser(u)}>Editar</Button>
                             <Button size="sm" variant="destructive" onClick={() => deleteUser(u)}>Eliminar</Button>
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </>
+        )}
 
-         
-        </div>
         {/* Modal: Crear / Editar usuario */}
         <Dialog open={userModalOpen} onOpenChange={setUserModalOpen}>
-          <DialogContent>
+          <DialogContent className="max-w-md w-[calc(100%-2rem)] rounded-2xl sm:rounded-lg">
             <DialogHeader>
-              <DialogTitle>{isCreating ? 'Crear usuario' : `Editar usuario: ${editingUser?.email || editingUser?.nombre || editingUser?.id}`}</DialogTitle>
+              <DialogTitle>{isCreating ? 'Crear usuario' : `Editar: ${editingUser?.nombre || editingUser?.email || editingUser?.id}`}</DialogTitle>
               <DialogDescription>{isCreating ? 'Complete los datos para crear un usuario.' : 'Modifique los datos del usuario.'}</DialogDescription>
             </DialogHeader>
-            <div className="space-y-3 mt-2">
-              <div>
-                <label className="block text-sm">Nombre</label>
-                <input className="w-full border rounded p-1" value={userForm.nombre || ''} onChange={(e) => setUserForm((s) => ({ ...s, nombre: e.target.value }))} />
+            <div className="space-y-4 mt-2">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Nombre</label>
+                <Input className="h-11 text-base" value={userForm.nombre || ''} onChange={(e) => setUserForm((s) => ({ ...s, nombre: e.target.value }))} />
               </div>
-              <div>
-                <label className="block text-sm">Email</label>
-                <input className="w-full border rounded p-1" value={userForm.email || ''} onChange={(e) => setUserForm((s) => ({ ...s, email: e.target.value }))} />
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Email</label>
+                <Input className="h-11 text-base" type="email" inputMode="email" autoComplete="email" value={userForm.email || ''} onChange={(e) => setUserForm((s) => ({ ...s, email: e.target.value }))} />
               </div>
-              <div>
-                <label className="block text-sm">Password {editingUser ? '(dejar vacío para no cambiar)' : ''}</label>
-                <input type="password" className="w-full border rounded p-1" value={userForm.password || ''} onChange={(e) => setUserForm((s) => ({ ...s, password: e.target.value }))} />
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">
+                  Password{' '}
+                  {editingUser && <span className="text-muted-foreground font-normal">(vacío = no cambiar)</span>}
+                </label>
+                <Input className="h-11 text-base" type="password" autoComplete="new-password" value={userForm.password || ''} onChange={(e) => setUserForm((s) => ({ ...s, password: e.target.value }))} />
               </div>
-              <div>
-                <label className="block text-sm">Rol</label>
-                <select className="w-full border rounded p-1" value={userForm.rol || 'user'} onChange={(e) => setUserForm((s) => ({ ...s, rol: e.target.value }))}>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Rol</label>
+                <select className="flex h-11 w-full rounded-md border border-input bg-background px-3 text-base" value={userForm.rol || 'user'} onChange={(e) => setUserForm((s) => ({ ...s, rol: e.target.value }))}>
                   <option value="user">user</option>
+                  <option value="influencer">influencer</option>
                   <option value="admin">admin</option>
                 </select>
               </div>
             </div>
-            <DialogFooter>
-              <div className="flex gap-2">
-                {isCreating ? (
-                  <Button onClick={submitCreateUser}>Crear</Button>
-                ) : (
-                  <Button onClick={submitUpdateUser}>Guardar</Button>
-                )}
-                <Button variant="outline" onClick={() => setUserModalOpen(false)}>Cancelar</Button>
-              </div>
+            <DialogFooter className="flex-col-reverse sm:flex-row gap-2 mt-2">
+              <Button variant="outline" className="h-11 w-full sm:w-auto" onClick={() => setUserModalOpen(false)}>Cancelar</Button>
+              {isCreating ? (
+                <Button className="h-11 w-full sm:w-auto" onClick={submitCreateUser}>Crear</Button>
+              ) : (
+                <Button className="h-11 w-full sm:w-auto" onClick={submitUpdateUser}>Guardar</Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
         {/* Modal: Permisos */}
         <Dialog open={permisosModalOpen} onOpenChange={setPermisosModalOpen}>
-          <DialogContent>
+          <DialogContent className="max-w-md w-[calc(100%-2rem)] rounded-2xl sm:rounded-lg">
             <DialogHeader>
               <DialogTitle>Permisos — {selectedUser?.nombre || selectedUser?.email || selectedUser?.id}</DialogTitle>
               <DialogDescription>Asignar permisos por módulo al usuario.</DialogDescription>
             </DialogHeader>
-            <div className="space-y-2 mt-2">
+            <div className="space-y-1 mt-2 max-h-72 overflow-y-auto pr-1">
               {(availableModules && availableModules.length > 0 ? availableModules : ['dashboard', 'tasas_cambio', 'bancos', 'marcas', 'categorias', 'almacenes', 'productos', 'formulas', 'pedidos', 'usuarios']).map((m) => {
                 const key = typeof m === 'string' ? m : (m as any).key;
                 const label = typeof m === 'string' ? (m as string).replace('_', ' ') : ((m as any).label || (m as any).key.replace('_', ' '));
                 return (
-                  <div key={String(key)} className="flex items-center justify-between">
-                    <div className="capitalize text-sm">{label}</div>
-                    <input type="checkbox" checked={!!permisos?.[key]} onChange={(e) => setPermisos((p: any) => ({ ...(p || {}), [key]: e.target.checked }))} />
-                  </div>
+                  <label key={String(key)} className="flex items-center justify-between gap-3 rounded-lg px-2 py-3 hover:bg-muted/50 cursor-pointer min-h-[44px]">
+                    <span className="capitalize text-sm">{label}</span>
+                    <input
+                      type="checkbox"
+                      className="h-5 w-5 rounded accent-primary"
+                      checked={!!permisos?.[key]}
+                      onChange={(e) => setPermisos((p: any) => ({ ...(p || {}), [key]: e.target.checked }))}
+                    />
+                  </label>
                 );
               })}
             </div>
-            <DialogFooter>
-              <div className="flex gap-2 mt-4">
-                <Button onClick={savePermisos} disabled={permLoading}>{permLoading ? 'Guardando...' : 'Guardar permisos'}</Button>
-                <Button variant="destructive" onClick={deletePermisos}>Eliminar permisos</Button>
-                <Button variant="outline" onClick={() => setPermisosModalOpen(false)}>Cerrar</Button>
-              </div>
+            <DialogFooter className="flex-col gap-2 mt-4 sm:flex-row">
+              <Button className="h-11 w-full sm:w-auto" onClick={savePermisos} disabled={permLoading}>
+                {permLoading ? 'Guardando...' : 'Guardar permisos'}
+              </Button>
+              <Button className="h-11 w-full sm:w-auto" variant="destructive" onClick={deletePermisos}>Eliminar permisos</Button>
+              <Button className="h-11 w-full sm:w-auto" variant="outline" onClick={() => setPermisosModalOpen(false)}>Cerrar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

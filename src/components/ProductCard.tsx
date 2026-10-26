@@ -11,9 +11,10 @@ interface ProductCardProps {
   onAddToCart: (product: Product) => void;
   openModalOnAdd?: boolean;
   showStock?: boolean;
+  featuredLayout?: boolean;
 }
 
-export function ProductCard({ product, onAddToCart, openModalOnAdd = false, showStock = true }: ProductCardProps) {
+export function ProductCard({ product, onAddToCart, openModalOnAdd = false, showStock = true, featuredLayout = false }: ProductCardProps) {
   const [open, setOpen] = useState(false);
   const [tasa, setTasa] = useState<any | null>(null);
   const [selectedTamano, setSelectedTamano] = useState<any | null>(null);
@@ -99,27 +100,27 @@ export function ProductCard({ product, onAddToCart, openModalOnAdd = false, show
         <div className="p-4 md:p-5 flex flex-col flex-grow">
           <div className="mb-3">
             <p className="text-copper-600 text-xs font-semibold mb-1 uppercase tracking-wide">{product.brand || 'Marca'}</p>
-            <h3 className="text-lg md:text-xl font-bold text-copper-800 mb-1 font-playfair">{product.name}</h3>
+            <h3 className={`font-bold text-copper-800 mb-1 font-playfair ${featuredLayout ? 'text-base sm:text-lg md:text-xl break-words' : 'text-lg md:text-xl'}`}>{product.name}</h3>
             <span className="inline-block px-3 py-1 bg-cream-50 text-copper-700 text-xs font-medium rounded-full">{product.category || (product as any).tipo || ''}</span>
           </div>
 
           <p className="text-copper-700 text-sm mb-4 line-clamp-3 leading-relaxed">{product.description || ''}</p>
 
-          <div className="flex items-center justify-between pt-3 border-t border-cream-200 mt-auto">
+          <div className={`flex ${featuredLayout ? 'flex-col min-[380px]:flex-row min-[380px]:items-center' : 'items-center'} items-start min-[380px]:items-center justify-between gap-3 pt-3 border-t border-cream-200 mt-auto`}>
             <div>
               {(() => {
                 const pm = getPrecioMostrar(product, selectedTamano ?? undefined);
                 if (pm.precio != null && Number(pm.precio) > 0) {
                   // aplicar tasa si corresponde
                   const display = tasa && tasa.monto ? `${tasa.simbolo || 'USD'} ${(Number(pm.precio) * Number(tasa.monto)).toFixed(2)}` : `$${Number(pm.precio).toLocaleString('es-AR')}`;
-                  return <p className="text-2xl font-bold text-copper-800">{display}</p>;
+                  return <p className={`${featuredLayout ? 'text-lg sm:text-xl md:text-2xl break-all' : 'text-2xl'} font-bold text-copper-800`}>{display}</p>;
                 }
                 return <p className="text-sm font-semibold text-copper-700">Consultar precio</p>;
               })()}
               {showStock ? <p className="text-xs text-copper-600">{(product.stock ?? 0) > 0 ? `${product.stock} disponibles` : 'Sin stock'}</p> : null}
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className={`flex items-center gap-2 ${featuredLayout ? 'w-full min-[380px]:w-auto justify-between min-[380px]:justify-end' : 'gap-3'}`}>
               {/* tamanos chips */}
               {(() => {
                 const variantes = Array.isArray(product?.tamanos) && product.tamanos.length > 0
@@ -168,7 +169,7 @@ export function ProductCard({ product, onAddToCart, openModalOnAdd = false, show
                   onAddToCart(item as any);
                 }}
                 disabled={(getPrecioMostrar(product, selectedTamano ?? undefined).precio == null)}
-                className="inline-flex items-center gap-2 rounded-md px-3 py-2 bg-copper-500 text-cream-50 font-semibold hover:scale-105 transition"
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 py-2 bg-copper-500 text-cream-50 font-semibold hover:scale-105 transition"
               >
                 <ShoppingCart className="w-4 h-4" />
                 <span className="hidden sm:inline">Agregar</span>

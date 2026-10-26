@@ -21,9 +21,19 @@ import Pagos from "./pages/Pagos";
 import AboutUs from "./pages/AboutUs";
 import Almacenes from "./pages/Almacenes";
 import Categorias from "./pages/Categorias";
+import WhatsappAdmin from "./pages/WhatsappAdmin";
+import CintilloMensajes from "./pages/CintilloMensajes";
+import MarketingSection from "./pages/MarketingSection";
+import Cupones from "./pages/Cupones";
+import InfluencerDashboard from "./pages/InfluencerDashboard";
+import InfluencerAdminPreview from "./pages/InfluencerAdminPreview";
+import MarketingInfluencersPreview from "./pages/MarketingInfluencersPreview";
+import Reportes from "./pages/Reportes";
+import Rastreo from "./pages/Rastreo";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ModuleProtectedRoute from "./components/ModuleProtectedRoute";
+import PublicSite from "./components/PublicSite";
 
 const queryClient = new QueryClient();
 
@@ -34,14 +44,23 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <Routes>
-          {/* Rutas públicas */}
-          <Route path="/" element={<Hero />} />
-          <Route path="/categoria/:categorySlug" element={<Hero />} />
+          {/* Web pública. El panel y el login no cargan Google Ads. */}
+          <Route element={<PublicSite />}>
+            <Route path="/" element={<Hero />} />
+            <Route path="/categoria/:categorySlug" element={<Hero />} />
+            <Route path="/about" element={<AboutUs />} />
+            <Route path="/rastreo" element={<Rastreo />} />
+          </Route>
           <Route path="/login" element={<Login />} />
-          <Route path="/about" element={<AboutUs />} />
+
+          {import.meta.env.DEV && <Route path="/influencer-preview" element={<InfluencerDashboard preview />} />}
+          {import.meta.env.DEV && <Route path="/influencer-admin-preview" element={<InfluencerAdminPreview />} />}
+          {import.meta.env.DEV && <Route path="/marketing-influencers-preview" element={<MarketingInfluencersPreview />} />}
 
           {/* Rutas protegidas */}
           <Route element={<ProtectedRoute />}>
+            <Route path="/influencer" element={<InfluencerDashboard />} />
+
             <Route element={<ModuleProtectedRoute moduleKey="dashboard" />}>
               <Route path="/dashboard" element={<Dashboard />} />
             </Route>
@@ -72,12 +91,24 @@ const App = () => (
               <Route path="/pedidos" element={<Pedidos />} />
             </Route>
 
+            <Route element={<ModuleProtectedRoute moduleKey="dashboard" />}>
+              <Route path="/reportes" element={<Reportes />} />
+              <Route path="/reportes/:tipo" element={<Reportes />} />
+            </Route>
+
             <Route element={<ModuleProtectedRoute moduleKey="tasas_cambio" />}>
               <Route path="/tasas-cambio" element={<TasasCambio />} />
             </Route>
 
             <Route element={<ModuleProtectedRoute moduleKey="usuarios" />}>
               <Route path="/usuarios" element={<Usuarios />} />
+            </Route>
+
+            <Route element={<ModuleProtectedRoute moduleKey="usuarios" />}>
+              <Route path="/admin/whatsapp" element={<WhatsappAdmin />} />
+              <Route path="/admin/cintillo" element={<CintilloMensajes />} />
+              <Route path="/admin/marketing/destacados" element={<MarketingSection title="Destacados" />} />
+              <Route path="/admin/marketing/cupones" element={<Cupones />} />
             </Route>
 
             <Route element={<ModuleProtectedRoute moduleKey="marcas" />}>

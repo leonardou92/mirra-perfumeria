@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { TableSkeleton } from '@/components/admin-skeletons';
 import { getImageUrl } from '@/lib/utils';
 import { Layout } from "@/components/Layout";
 import { getProductos, deleteProducto, getProducto, adjustInventario, getAlmacenes, addProductoAlmacen } from "@/integrations/api";
@@ -15,9 +16,9 @@ import {
 } from "@/components/ui/dialog";
 import { Form, FormItem, FormLabel, FormControl } from "@/components/ui/form";
 import { useForm } from "react-hook-form";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Search, Plus, Edit, Trash2, Package, Warehouse } from "lucide-react";
+import { Search, Plus, Edit, Trash2, Warehouse, Loader2, Star } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -74,7 +75,7 @@ export default function Productos() {
   const [assignMotivo, setAssignMotivo] = useState<string>("");
   const [assignReferencia, setAssignReferencia] = useState<string>("");
   const [assignLoading, setAssignLoading] = useState(false);
-  
+
   const form = useForm({
     defaultValues: {
       nombre: "",
@@ -85,10 +86,13 @@ export default function Productos() {
       proveedor_id: null,
       categoria_id: null,
       marca_id: null,
+      visible_en_catalogo: true,
     },
   });
 
   const [categoriaId, setCategoriaId] = useState<number | null>(null);
+  const [visibleEnCatalogo, setVisibleEnCatalogo] = useState(true);
+  const [destacado, setDestacado] = useState(false);
   const [marcaId, setMarcaId] = useState<number | null>(null);
   const [categorias, setCategorias] = useState<any[]>([]);
   const [marcas, setMarcas] = useState<any[]>([]);
@@ -134,9 +138,12 @@ export default function Productos() {
       // Inicializar la URL de imagen con la existente del producto (si la tiene).
       // Soportar ambas propiedades por si la API usa `image_url` o `imagen_url`.
       setImageUrl(editingProduct?.imagen_url ?? editingProduct?.image_url ?? null);
-      // inicializar categoria/marca
+      // inicializar categoria/marca/visibilidad
       setCategoriaId(editingProduct?.categoria_id ?? null);
       setMarcaId(editingProduct?.marca_id ?? null);
+      setVisibleEnCatalogo(editingProduct?.visible_en_catalogo ?? true);
+      setDestacado(editingProduct?.destacado ?? false);
+      form.setValue('visible_en_catalogo', editingProduct?.visible_en_catalogo ?? true);
       // cargar categorías disponibles cuando se abre el modal
       (async () => {
         try {
@@ -212,6 +219,8 @@ export default function Productos() {
         image_url: imageUrl || null,
         categoria_id: categoriaId ?? null,
         marca_id: marcaId ?? null,
+        visible_en_catalogo: Boolean(visibleEnCatalogo),
+        destacado,
       };
       console.log("Creando/actualizando producto, payload:", payload);
       if (editingProduct) {
@@ -237,10 +246,12 @@ export default function Productos() {
   // Asegurar que al abrir el modal en modo 'nuevo' el formulario esté vacío.
   useEffect(() => {
     if (isOpen && !editingProduct) {
-      form.reset({ nombre: '', unidad: 'unidad', stock: 0, costo: 0, precio_venta: 0, proveedor_id: null, categoria_id: null, marca_id: null });
+      form.reset({ nombre: '', unidad: 'unidad', stock: 0, costo: 0, precio_venta: 0, proveedor_id: null, categoria_id: null, marca_id: null, visible_en_catalogo: true });
       setImageUrl(null);
       setCategoriaId(null);
       setMarcaId(null);
+      setVisibleEnCatalogo(true);
+      setDestacado(false);
       setProductDetalle(null);
     }
   }, [isOpen, editingProduct]);
@@ -285,6 +296,8 @@ export default function Productos() {
           image_url: url,
           categoria_id: categoriaId ?? (editingProduct?.categoria_id ?? null),
           marca_id: marcaId ?? (editingProduct?.marca_id ?? null),
+          visible_en_catalogo: Boolean(visibleEnCatalogo ?? true),
+          destacado,
         };
 
         const updated = await updateProducto(editingProduct.id, payload);
@@ -292,8 +305,8 @@ export default function Productos() {
         setProductos((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
         setEditingProduct(updated);
         toast.success('Imagen guardada en el servidor');
-          // actualizar detalle de inventario si está presente
-          setProductDetalle(updated);
+        // actualizar detalle de inventario si está presente
+        setProductDetalle(updated);
       } catch (err) {
         console.error('Error guardando la imagen en el backend', err);
         const message = parseApiError(err) || 'No se pudo guardar la imagen en el servidor';
@@ -425,22 +438,19 @@ export default function Productos() {
     }
   }
 
-  
+
 
   return (
     <Layout>
       <div className="space-y-6">
-          <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-3xl font-bold tracking-tight">Productos</h2>
-            <p className="text-muted-foreground">Gestión completa del catálogo de productos</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <a href="/docs/inventario-produccion.txt" target="_blank" rel="noreferrer" className="text-sm text-muted-foreground underline">Docs: Inventario/Producción</a>
+            <h2 className="text-2xl font-semibold tracking-tight">Productos</h2>
+            <p className="text-sm text-muted-foreground">Gestión completa del catálogo de productos</p>
           </div>
           <div>
             <Button
-              className="gap-2"
+              className="gap-2 h-11 px-4"
               variant="default"
               onClick={() => {
                 // Asegurar que al crear un nuevo producto el formulario esté en blanco
@@ -459,7 +469,7 @@ export default function Productos() {
           </div>
 
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
-            <DialogContent className="max-w-4xl">
+            <DialogContent className="max-w-4xl w-full h-[100dvh] sm:h-auto overflow-y-auto rounded-none sm:rounded-lg sm:max-h-[90vh]">
               <DialogHeader>
                 <DialogTitle>{editingProduct ? 'Editar' : 'Nuevo'} Producto</DialogTitle>
                 <DialogDescription>Completa los datos del producto</DialogDescription>
@@ -474,9 +484,9 @@ export default function Productos() {
                         <FormItem>
                           <FormLabel>Nombre del Producto</FormLabel>
                           <FormControl>
-                            <Input 
-                              placeholder="Ej: Jabón de Lavanda" 
-                              {...form.register("nombre", { required: true })} 
+                            <Input
+                              placeholder="Ej: Jabón de Lavanda"
+                              {...form.register("nombre", { required: true })}
                             />
                           </FormControl>
                         </FormItem>
@@ -504,8 +514,8 @@ export default function Productos() {
                           <div>
                             <FormItem>
                               <FormLabel>Stock</FormLabel>
-                                <FormControl>
-                                  <Input readOnly value={
+                              <FormControl>
+                                <Input readOnly value={
                                   // mostrar stock total calculado desde productDetalle si existe, si no usar editingProduct.stock o 0
                                   (() => {
                                     const inv = (productDetalle?.inventario) || (editingProduct as any)?.inventario;
@@ -514,20 +524,20 @@ export default function Productos() {
                                     }
                                     return Number(editingProduct?.stock ?? 0).toLocaleString('es-AR');
                                   })()
-                                  } className="w-full" />
-                                </FormControl>
+                                } className="w-full" />
+                              </FormControl>
                             </FormItem>
                           </div>
 
                           <FormItem>
                             <FormLabel>Costo</FormLabel>
                             <FormControl>
-                              <Input 
-                                type="number" 
-                                step="0.01" 
+                              <Input
+                                type="number"
+                                step="0.01"
                                 min="0"
                                 placeholder="0.00"
-                                {...form.register("costo", { valueAsNumber: true })} 
+                                {...form.register("costo", { valueAsNumber: true })}
                               />
                             </FormControl>
                           </FormItem>
@@ -535,12 +545,12 @@ export default function Productos() {
                           <FormItem>
                             <FormLabel>Precio Venta</FormLabel>
                             <FormControl>
-                              <Input 
-                                type="number" 
-                                step="0.01" 
+                              <Input
+                                type="number"
+                                step="0.01"
                                 min="0"
                                 placeholder="0.00"
-                                {...form.register("precio_venta", { valueAsNumber: true })} 
+                                {...form.register("precio_venta", { valueAsNumber: true })}
                               />
                             </FormControl>
                           </FormItem>
@@ -580,18 +590,49 @@ export default function Productos() {
                             </FormControl>
                           </div>
                         </div>
+
+                        <div className="flex items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
+                          <input
+                            id="visible_en_catalogo"
+                            type="checkbox"
+                            checked={visibleEnCatalogo}
+                            onChange={(e) => {
+                              const next = e.target.checked;
+                              setVisibleEnCatalogo(next);
+                              form.setValue('visible_en_catalogo', next);
+                            }}
+                            className="h-4 w-4 accent-primary"
+                          />
+                          <label htmlFor="visible_en_catalogo" className="text-sm font-medium text-foreground">
+                            Mostrar en catálogo público
+                          </label>
+                        </div>
+
+                        <div className="flex items-center gap-3 rounded-md border border-border bg-muted/30 px-3 py-2">
+                          <input
+                            id="destacado"
+                            type="checkbox"
+                            checked={destacado}
+                            onChange={(e) => setDestacado(e.target.checked)}
+                            className="h-4 w-4 accent-primary"
+                          />
+                          <label htmlFor="destacado" className="flex items-center gap-2 text-sm font-medium text-foreground">
+                            <Star className="h-4 w-4 text-amber-500" />
+                            Mostrar en productos destacados
+                          </label>
+                        </div>
                       </div>
 
                       {/* Columna Derecha - Imagen */}
                       <div className="space-y-4">
-                        
-                        
+
+
 
                         {/* Contenedor de subida separado y más claro */}
                         <FormItem className="col-span-2">
                           <FormLabel>Subir nueva imagen (opcional)</FormLabel>
                           <div className="mt-2 p-3 border rounded-md bg-background">
-                            <ImageUpload 
+                            <ImageUpload
                               onImageUpload={handleImageUpload}
                               // Pasar la imagen que viene de la base de datos o la última subida
                               // (imageUrl) para que el uploader muestre la preview anterior/alterna al editar.
@@ -601,7 +642,7 @@ export default function Productos() {
                           </div>
                         </FormItem>
                         {/* Inventario por almacén (solo en modo edición) */}
-                        {editingProduct && ( <>
+                        {editingProduct && (<>
                           <div className="col-span-2 mt-4">
                             <h4 className="text-sm font-semibold mb-2">Inventario por almacén</h4>
                             {loadingDetalle ? (
@@ -668,9 +709,9 @@ export default function Productos() {
                     </div>
 
                     <DialogFooter className="border-t pt-4">
-                      <Button 
-                        type="button" 
-                        variant="outline" 
+                      <Button
+                        type="button"
+                        variant="outline"
                         onClick={() => {
                           setIsOpen(false);
                           setImageUrl(null);
@@ -689,178 +730,210 @@ export default function Productos() {
           </Dialog>
         </div>
 
-        {/* Search and Filters */}
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex gap-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Buscar por nombre o código..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-              <Button variant="outline">Filtros</Button>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Buscador */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nombre..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 h-11 text-base sm:max-w-sm sm:h-9 sm:text-sm"
+          />
+        </div>
 
-        {/* Products Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Listado de Productos
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div>Cargando...</div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Imagen</TableHead>
-                    <TableHead>Nombre</TableHead>
-                    {/* Tipo eliminado */}
-                    <TableHead>Unidad</TableHead>
-                    <TableHead>Categoría</TableHead>
-                    <TableHead>Marca</TableHead>
-                    <TableHead>Stock</TableHead>
-                    <TableHead>Costo</TableHead>
-                    <TableHead>Precio Venta</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredProducts.map((product: any) => (
-                    <TableRow key={product.id} className="hover:bg-muted/50 transition-smooth">
-                      <TableCell className="font-mono text-sm">{product.id}</TableCell>
-                      <TableCell>
-                        <div className="w-12 h-12 rounded overflow-hidden bg-gray-100 flex items-center justify-center">
+        {loading ? (
+          <TableSkeleton columns={10} />
+        ) : (
+          <>
+            {/* ── Móvil: tarjetas ── */}
+            <div className="flex flex-col gap-3 sm:hidden">
+              {filteredProducts.map((product: any) => {
+                const inv = product?.inventario || [];
+                const totalStock = Array.isArray(inv) && inv.length > 0
+                  ? inv.reduce((s: number, it: any) => s + Number(it.stock_disponible || 0), 0)
+                  : Number(product?.stock || 0);
+                const stockWarn = totalStock < 20;
+
+                const openEdit = () => {
+                  setEditingProduct(product);
+                  form.reset({ nombre: product.nombre, unidad: product.unidad, costo: product.costo, precio_venta: product.precio_venta, proveedor_id: product.proveedor_id, categoria_id: product.categoria_id ?? null, marca_id: product.marca_id ?? null });
+                  setCategoriaId(product.categoria_id ?? null);
+                  setMarcaId(product.marca_id ?? null);
+                  setVisibleEnCatalogo(product.visible_en_catalogo ?? true);
+                  setDestacado(product.destacado ?? false);
+                  form.setValue('visible_en_catalogo', product.visible_en_catalogo ?? true);
+                  setIsOpen(true);
+                  setLoadingDetalle(true);
+                  setProductDetalle(null);
+                  setProductFormula(null);
+                  getProducto(product.id).then((d) => setProductDetalle(d)).catch((e) => { console.error(e); toast.error('No se pudo cargar inventario'); }).finally(() => setLoadingDetalle(false));
+                  (async () => { try { const all = await getFormulas(); const list = Array.isArray(all) ? all : (all?.data || []); const found = list.find((f: any) => Number(f.producto_terminado_id) === Number(product.id)); if (found) setProductFormula(found); } catch (e) { console.error(e); } })();
+                };
+
+                const openStock = () => {
+                  setViewStockProduct(product);
+                  setViewStockOpen(true);
+                  setViewStockLoading(true);
+                  setViewStockDetalle(null);
+                  getProducto(product.id).then((d) => setViewStockDetalle(d)).catch((e) => { console.error(e); toast.error('No se pudo cargar existencias'); }).finally(() => setViewStockLoading(false));
+                };
+
+                return (
+                  <Card key={product.id} className="overflow-hidden">
+                    <CardContent className="p-0">
+                      <div className="flex items-center gap-3 p-3">
+                        <div className="w-14 h-14 rounded-lg overflow-hidden bg-muted shrink-0">
                           <img
                             src={getImageUrl(product) ?? ''}
-                            alt={product.nombre ?? 'imagen producto'}
+                            alt={product.nombre ?? ''}
                             className="w-full h-full object-cover"
-                            onError={(e) => { 
-                              const t = e.currentTarget as HTMLImageElement; 
-                              t.onerror = null; 
-                              // Usar una imagen aleatoria del asset folder como fallback
-                              const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
-                              const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
-                              t.src = randomFallback; 
-                              console.error('[Productos] image load failed, using fallback:', t.src); 
-                            }}
+                            onError={(e) => { const t = e.currentTarget as HTMLImageElement; t.onerror = null; const imgs = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg']; t.src = imgs[Math.floor(Math.random() * imgs.length)]; }}
                           />
                         </div>
-                      </TableCell>
-                      <TableCell className="font-medium">{product.nombre}</TableCell>
-                      {/* campo tipo eliminado */}
-                      <TableCell>{product.unidad}</TableCell>
-                      <TableCell>{product.categoria_nombre ?? categoriasMap[product.categoria_id] ?? '-'}</TableCell>
-                      <TableCell>{product.marca_nombre ?? marcasMap[product.marca_id] ?? '-'}</TableCell>
-                      <TableCell>
-                        {(() => {
-                          const inv = (product?.inventario) || [];
-                          const totalDisponible = Array.isArray(inv) && inv.length > 0
-                            ? inv.reduce((s: number, it: any) => s + (Number(it.stock_disponible || 0)), 0)
-                            : Number(product?.stock || 0);
-                          const warn = totalDisponible < 20;
-                          return (
-                            <span className={warn ? "text-destructive font-semibold" : ""}>
-                              {Number(totalDisponible).toLocaleString('es-AR')}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <p className="font-semibold truncate">{product.nombre}</p>
+                            {product.destacado && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                                <Star className="h-3 w-3 fill-current" /> Destacado
+                              </span>
+                            )}
+                            {product.visible_en_catalogo === false && (
+                              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground shrink-0">Oculto</span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {product.categoria_nombre ?? categoriasMap[product.categoria_id] ?? '—'} · {product.marca_nombre ?? marcasMap[product.marca_id] ?? '—'}
+                          </p>
+                          <div className="flex items-center gap-3 mt-1 text-sm">
+                            <span className={stockWarn ? 'text-destructive font-semibold' : 'text-foreground font-medium'}>
+                              Stock: {Number(totalStock).toLocaleString('es-AR')}
                             </span>
-                          );
-                        })()}
-                      </TableCell>
-                      <TableCell>{product.costo ?? "-"}</TableCell>
-                      <TableCell>{product.precio_venta ?? "-"}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                         
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              // abrir modal en modo edición
+                            <span className="text-muted-foreground">${product.precio_venta ?? '—'}</span>
+                          </div>
+                        </div>
+                        <span className="text-xs tabular-nums text-muted-foreground self-start shrink-0">#{product.id}</span>
+                      </div>
+                      <div className="flex border-t divide-x">
+                        <button className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors min-h-[44px]" onClick={openEdit}>
+                          <Edit className="h-4 w-4" /> Editar
+                        </button>
+                        <button className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors min-h-[44px]" onClick={openStock}>
+                          <Warehouse className="h-4 w-4" /> Stock
+                        </button>
+                        <button className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm text-destructive hover:bg-destructive/10 transition-colors min-h-[44px]" onClick={() => { setDeleteTarget(product); setAlertOpen(true); }}>
+                          <Trash2 className="h-4 w-4" /> Borrar
+                        </button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+              {filteredProducts.length === 0 && (
+                <p className="py-8 text-center text-sm text-muted-foreground">No hay productos para mostrar.</p>
+              )}
+            </div>
+
+            {/* ── Desktop: tabla ── */}
+            <Card className="hidden sm:block">
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">ID</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Imagen</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Nombre</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Unidad</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Categoría</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Marca</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Stock</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Costo</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Precio</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3 text-right">Acciones</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredProducts.map((product: any) => (
+                      <TableRow key={product.id} className="hover:bg-muted/40 transition-colors duration-150">
+                        <TableCell className="text-xs tabular-nums text-muted-foreground">#{product.id}</TableCell>
+                        <TableCell>
+                          <div className="w-12 h-12 rounded overflow-hidden bg-muted flex items-center justify-center">
+                            <img
+                              src={getImageUrl(product) ?? ''}
+                              alt={product.nombre ?? 'imagen producto'}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                const t = e.currentTarget as HTMLImageElement;
+                                t.onerror = null;
+                                const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+                                t.src = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
+                              }}
+                            />
+                          </div>
+                        </TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <span>{product.nombre}</span>
+                            {product.destacado && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                                <Star className="h-3 w-3 fill-current" /> Destacado
+                              </span>
+                            )}
+                            {product.visible_en_catalogo === false ? (
+                              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Oculto</span>
+                            ) : null}
+                          </div>
+                        </TableCell>
+                        <TableCell>{product.unidad}</TableCell>
+                        <TableCell>{product.categoria_nombre ?? categoriasMap[product.categoria_id] ?? '-'}</TableCell>
+                        <TableCell>{product.marca_nombre ?? marcasMap[product.marca_id] ?? '-'}</TableCell>
+                        <TableCell>
+                          {(() => {
+                            const inv = (product?.inventario) || [];
+                            const totalDisponible = Array.isArray(inv) && inv.length > 0
+                              ? inv.reduce((s: number, it: any) => s + (Number(it.stock_disponible || 0)), 0)
+                              : Number(product?.stock || 0);
+                            const warn = totalDisponible < 20;
+                            return <span className={warn ? 'text-destructive font-semibold' : ''}>{Number(totalDisponible).toLocaleString('es-AR')}</span>;
+                          })()}
+                        </TableCell>
+                        <TableCell>{product.costo ?? '-'}</TableCell>
+                        <TableCell>{product.precio_venta ?? '-'}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button variant="ghost" size="icon" onClick={() => {
                               setEditingProduct(product);
-                              form.reset({
-                                nombre: product.nombre,
-                                unidad: product.unidad,
-                                // stock no se setea porque no es editable en el formulario
-                                costo: product.costo,
-                                precio_venta: product.precio_venta,
-                                proveedor_id: product.proveedor_id,
-                                categoria_id: product.categoria_id ?? null,
-                                marca_id: product.marca_id ?? null,
-                              });
+                              form.reset({ nombre: product.nombre, unidad: product.unidad, costo: product.costo, precio_venta: product.precio_venta, proveedor_id: product.proveedor_id, categoria_id: product.categoria_id ?? null, marca_id: product.marca_id ?? null });
                               setCategoriaId(product.categoria_id ?? null);
                               setMarcaId(product.marca_id ?? null);
+                              setVisibleEnCatalogo(product.visible_en_catalogo ?? true);
+                              setDestacado(product.destacado ?? false);
+                              form.setValue('visible_en_catalogo', product.visible_en_catalogo ?? true);
                               setIsOpen(true);
-                              // cargar detalle completo (incluye inventario por almacén)
                               setLoadingDetalle(true);
                               setProductDetalle(null);
                               setProductFormula(null);
-                              getProducto(product.id)
-                                .then((d) => setProductDetalle(d))
-                                .catch((e) => { console.error('Error cargando detalle producto:', e); toast.error('No se pudo cargar inventario'); })
-                                .finally(() => setLoadingDetalle(false));
-
-                              // Cargar fórmulas y buscar la que corresponde a este producto terminado
-                              (async () => {
-                                try {
-                                  const all = await getFormulas();
-                                  const list = Array.isArray(all) ? all : (all?.data || []);
-                                  const found = list.find((f: any) => Number(f.producto_terminado_id) === Number(product.id));
-                                  if (found) setProductFormula(found);
-                                } catch (e) {
-                                  console.error('Error cargando fórmulas', e);
-                                }
-                              })();
-                            }}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Ver existencias por almacén"
-                            onClick={() => {
+                              getProducto(product.id).then((d) => setProductDetalle(d)).catch((e) => { console.error('Error cargando detalle producto:', e); toast.error('No se pudo cargar inventario'); }).finally(() => setLoadingDetalle(false));
+                              (async () => { try { const all = await getFormulas(); const list = Array.isArray(all) ? all : (all?.data || []); const found = list.find((f: any) => Number(f.producto_terminado_id) === Number(product.id)); if (found) setProductFormula(found); } catch (e) { console.error('Error cargando fórmulas', e); } })();
+                            }}><Edit className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon" title="Ver existencias por almacén" onClick={() => {
                               setViewStockProduct(product);
                               setViewStockOpen(true);
                               setViewStockLoading(true);
                               setViewStockDetalle(null);
-                              getProducto(product.id)
-                                .then((d) => setViewStockDetalle(d))
-                                .catch((e) => { console.error('Error cargando existencias:', e); toast.error('No se pudo cargar existencias'); })
-                                .finally(() => setViewStockLoading(false));
-                            }}
-                          >
-                            <Warehouse className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setDeleteTarget(product);
-                              setAlertOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                              getProducto(product.id).then((d) => setViewStockDetalle(d)).catch((e) => { console.error('Error cargando existencias:', e); toast.error('No se pudo cargar existencias'); }).finally(() => setViewStockLoading(false));
+                            }}><Warehouse className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon" onClick={() => { setDeleteTarget(product); setAlertOpen(true); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </>
+        )}
         {/* Confirmación de borrado */}
         <AlertDialog open={alertOpen} onOpenChange={setAlertOpen}>
           <AlertDialogContent>
@@ -895,8 +968,8 @@ export default function Productos() {
         </AlertDialog>
         {/* Modal de existencias por almacén (solo lectura) */}
         <Dialog open={viewStockOpen} onOpenChange={setViewStockOpen}>
-          <DialogContent className="max-w-4xl w-[95vw] lg:w-3/4 max-h-[80vh] overflow-auto">
-            <DialogHeader className="sticky top-0 bg-white/80 backdrop-blur-sm z-10">
+          <DialogContent className="max-w-4xl w-full h-[100dvh] sm:h-auto sm:max-h-[80vh] overflow-auto rounded-none sm:rounded-lg sm:w-[95vw] lg:w-3/4">
+            <DialogHeader className="sticky top-0 bg-card/80 backdrop-blur-sm z-10">
               <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
                 <div>
                   <DialogTitle className="text-lg">Existencias</DialogTitle>
@@ -915,11 +988,14 @@ export default function Productos() {
 
             <div className="p-4">
               {viewStockLoading ? (
-                <div className="text-sm text-copper-600">Cargando...</div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Cargando...
+                </div>
               ) : (() => {
                 const inv = (viewStockDetalle?.inventario) || (viewStockProduct as any)?.inventario || [];
                 if (!Array.isArray(inv) || inv.length === 0) {
-                  return <div className="text-sm text-copper-600">No hay información de inventario por almacén.</div>;
+                  return <div className="text-sm text-muted-foreground">No hay información de inventario por almacén.</div>;
                 }
 
                 const totalDisponible = inv.reduce((s: number, it: any) => s + (Number(it.stock_disponible || 0)), 0);
@@ -929,7 +1005,7 @@ export default function Productos() {
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="text-sm text-muted-foreground">Total disponible</div>
-                        <div className="text-3xl font-bold text-copper-800">{totalDisponible.toLocaleString('es-AR')}</div>
+                        <div className="text-3xl font-bold text-foreground">{totalDisponible.toLocaleString('es-AR')}</div>
                       </div>
                       <div className="text-right">
                         <div className="text-sm text-muted-foreground">Detalles</div>
@@ -939,11 +1015,11 @@ export default function Productos() {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                       {inv.map((it: any) => (
-                        <div key={it.id} className="p-4 bg-white rounded-lg shadow-sm border flex flex-col justify-between min-h-[140px]">
+                        <div key={it.id} className="p-4 bg-card rounded-lg border flex flex-col justify-between min-h-[140px]">
                           <div>
                             <div className="flex items-center justify-between">
                               <div>
-                                <div className="font-semibold text-copper-800">{it.almacen_nombre || `#${it.almacen_id}`}</div>
+                                <div className="font-semibold">{it.almacen_nombre || `#${it.almacen_id}`}</div>
                                 <div className="text-xs text-muted-foreground">{it.almacen_ubicacion || 'Sin ubicación'}</div>
                               </div>
                               <Badge className="text-xs" variant={it.almacen_tipo === 'Venta' ? 'secondary' : 'outline'}>{it.almacen_tipo}</Badge>
@@ -957,7 +1033,7 @@ export default function Productos() {
                               <div className="font-medium text-right">{Number(it.stock_comprometido || 0).toLocaleString('es-AR')}</div>
 
                               <div className="text-muted-foreground">Disponible</div>
-                              <div className="font-bold text-copper-800 text-right">{Number(it.stock_disponible || 0).toLocaleString('es-AR')}</div>
+                              <div className="font-bold text-right">{Number(it.stock_disponible || 0).toLocaleString('es-AR')}</div>
                             </div>
                           </div>
                           <div className="mt-3 text-right flex gap-2 justify-end">

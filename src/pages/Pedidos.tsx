@@ -1,12 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Layout } from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { getPedidosStats, getPedidosPaginated, getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas, completarOrdenProduccion, searchPedidos } from "@/integrations/api";
+import { getPedidosStats, getPedidosPaginated, getPedidos, getPedidoVenta, completarPedidoVenta, cancelarPedidoVenta, API_URL, getToken, createPago, updatePedidoAjustes, getBancos, getFormasPago, apiFetch, getTasaBySimbolo, getTasasCambio, getPagosByPedido, getPagos, getProducto, getOrdenProduccionDetailed, createProduccion, getAlmacenes, getFormula, getProductos, getFormulas, getCatalogoPaginated, completarOrdenProduccion, searchPedidos, getPedidosCuponesResumen } from "@/integrations/api";
 import PaymentByBank from '@/components/PaymentByBank';
 import { parseApiError, getImageUrl } from '@/lib/utils';
-import { Eye, ChevronLeft, ChevronRight, Loader2, User, Phone, FileText } from 'lucide-react';
+import { Eye, ChevronLeft, ChevronRight, Loader2, User, Phone, FileText, TicketPercent } from 'lucide-react';
+import { TableSkeleton } from '@/components/admin-skeletons';
 import { useNavigate } from 'react-router-dom';
 import {
   Dialog,
@@ -21,6 +22,68 @@ import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
 import { toast } from "sonner";
 
+type AjusteDraft = {
+  id?: number | string;
+  tipo: 'descuento' | 'recargo';
+  modo: 'porcentaje' | 'monto';
+  valor: number;
+  motivo: string;
+};
+
+type AjustesSummary = {
+  ajustes: Array<AjusteDraft & { monto_aplicado: number }>;
+  total_base: number;
+  total_descuentos: number;
+  total_recargos: number;
+  total_final: number;
+};
+
+const roundMoney = (value: number): number => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round(num * 100) / 100;
+};
+
+const computeAjustesSummary = (base: number, list: AjusteDraft[]): AjustesSummary => {
+  const baseVal = roundMoney(Number(base) || 0);
+  let totalDesc = 0;
+  let totalRec = 0;
+  const normalized = (Array.isArray(list) ? list : []).map((item) => {
+    const tipo = ((item?.tipo || 'descuento') === 'recargo' ? 'recargo' : 'descuento') as AjusteDraft['tipo'];
+    const modo = ((item?.modo || 'porcentaje') === 'monto' ? 'monto' : 'porcentaje') as AjusteDraft['modo'];
+    const valorNum = roundMoney(Number(item?.valor) || 0);
+    const applied = modo === 'porcentaje' ? roundMoney(baseVal * (valorNum / 100)) : roundMoney(valorNum);
+    if (tipo === 'descuento') totalDesc += applied;
+    else totalRec += applied;
+    return { ...item, tipo, modo, valor: valorNum, monto_aplicado: applied };
+  });
+  totalDesc = roundMoney(totalDesc);
+  totalRec = roundMoney(totalRec);
+  let totalFinal = roundMoney(baseVal - totalDesc + totalRec);
+  if (totalFinal < 0) totalFinal = 0;
+  return {
+    ajustes: normalized,
+    total_base: baseVal,
+    total_descuentos: totalDesc,
+    total_recargos: totalRec,
+    total_final: totalFinal,
+  };
+};
+
+const adaptAjusteFromApi = (aj: any): AjusteDraft => {
+  const tipo = String(aj?.tipo || '').toLowerCase() === 'recargo' ? 'recargo' : 'descuento';
+  const modo = String(aj?.modo || '').toLowerCase() === 'monto' ? 'monto' : 'porcentaje';
+  const valor = roundMoney(Number(aj?.valor ?? aj?.monto ?? 0) || 0);
+  const motivo = typeof aj?.motivo === 'string' ? aj.motivo : '';
+  return {
+    id: aj?.id ?? undefined,
+    tipo,
+    modo,
+    valor,
+    motivo,
+  };
+};
+
 export default function Pedidos() {
   const [pedidos, setPedidos] = useState<any[]>([]);
   const [page, setPage] = useState(1);
@@ -30,12 +93,20 @@ export default function Pedidos() {
   const [loading, setLoading] = useState(true);
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [stats, setStats] = useState({ todos: 0, pendiente: 0, enviado: 0, completado: 0, cancelado: 0 });
+  // Filtro "solo pedidos con cupón" y resumen de descuentos aplicados
+  const [conCupon, setConCupon] = useState(false);
+  const [cuponesResumen, setCuponesResumen] = useState<any[]>([]);
+  const [cuponesTotales, setCuponesTotales] = useState({ pedidos: 0, descuento: 0 });
   const [newOrdersCount, setNewOrdersCount] = useState<number>(0);
   const [pagosMap, setPagosMap] = useState<Record<number, any[]>>({});
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
+  const [ajustesDraft, setAjustesDraft] = useState<AjusteDraft[]>([]);
+  const [ajustesDirty, setAjustesDirty] = useState(false);
+  const [ajustesSaving, setAjustesSaving] = useState(false);
+  const [ajustesError, setAjustesError] = useState<string | null>(null);
   // Refrescar y reconstruir el mapa de pagos por pedido
   const refreshPagosMap = async () => {
     try {
@@ -79,19 +150,26 @@ export default function Pedidos() {
     return arr;
   };
 
-  const getRowClasses = (p: any) => {
-    const s = (p?.estado || p?.status || '').toString().toLowerCase();
-    let bg = 'bg-white';
-    let border = 'border-transparent';
-    let borderColor = 'border-transparent';
-    if (s === 'pendiente') { bg = 'bg-yellow-50/60'; borderColor = 'border-yellow-400'; }
-    else if (s === 'enviado') { bg = 'bg-sky-50/60'; borderColor = 'border-sky-400'; }
-    else if (s === 'completado') { bg = 'bg-green-50/60'; borderColor = 'border-green-400'; }
-    else if (s === 'cancelado') { bg = 'bg-red-50/60'; borderColor = 'border-red-400'; }
-    const ts = Date.parse(p?.fecha || p?.created_at || p?.createdAt || '') || 0;
-    const recent = (Date.now() - ts) < (1000 * 60 * 60 * 24); // 24h
-    // more lively styles: rounded cards, subtle shadow, left accent border and hover scale
-    return `transition-transform transform hover:scale-[1.01] duration-150 rounded-md ${bg} ${borderColor} border-l-4 ${recent ? 'shadow-md' : 'shadow-sm'}`;
+  const getRowClasses = (_p: any) => {
+    return 'transition-colors duration-150 hover:bg-muted/40';
+  };
+
+  const statusDotClass = (s: string) => {
+    const k = s.toLowerCase();
+    if (k === 'pendiente') return 'bg-amber-500';
+    if (k === 'enviado') return 'bg-blue-500';
+    if (k === 'completado') return 'bg-green-500';
+    if (k === 'cancelado') return 'bg-red-500';
+    return 'bg-gray-400';
+  };
+
+  const statusBadgeClass = (s: string) => {
+    const k = s.toLowerCase();
+    if (k === 'pendiente') return 'bg-amber-50 text-amber-800 border border-amber-200';
+    if (k === 'enviado') return 'bg-blue-50 text-blue-800 border border-blue-200';
+    if (k === 'completado') return 'bg-green-50 text-green-800 border border-green-200';
+    if (k === 'cancelado') return 'bg-red-50 text-red-800 border border-red-200';
+    return 'bg-muted text-muted-foreground border border-border';
   };
 
   const fetchStats = async () => {
@@ -105,12 +183,28 @@ export default function Pedidos() {
         completado: res.Completado || 0,
         cancelado: res.Cancelado || 0
       });
+      setCuponesTotales({
+        pedidos: Number(res.CuponesAplicados || 0),
+        descuento: Number(res.DescuentoCuponTotal || 0),
+      });
     } catch (e) {
       console.error('Error cargando estadísticas', e);
     }
   };
 
+  // Resumen de descuentos por cupón: cuántos pedidos y cuánto se descontó
+  const fetchCuponesResumen = async () => {
+    try {
+      const res = await getPedidosCuponesResumen();
+      const list = Array.isArray(res) ? res : (res?.data || []);
+      setCuponesResumen(list);
+    } catch (e) {
+      console.error('Error cargando resumen de cupones', e);
+    }
+  };
+
   useEffect(() => {
+    if (searchTerm.trim()) return;
     setLoading(true);
     // Cargar pedidos paginados (filtrados por estado si aplica) y luego el mapa de pagos
     (async () => {
@@ -118,8 +212,9 @@ export default function Pedidos() {
         // Cargar estadísticas solo si es la primera carga o si es necesario refrescar
         // (Opcional: mover a un useEffect separado si no queremos recargar stats al paginar)
         await fetchStats();
+        await fetchCuponesResumen();
 
-        const res = await getPedidosPaginated(page, limit, selectedStatus || undefined);
+        const res = await getPedidosPaginated(page, limit, selectedStatus || undefined, conCupon);
         // Handle response structure: { data: [], total: 50, page: 1, limit: 12, totalPages: 5 }
         const list = Array.isArray(res) ? res : (res?.data || []);
         setPedidos(sortPedidosByDateDesc(list));
@@ -143,7 +238,7 @@ export default function Pedidos() {
         setLoading(false);
       }
     })();
-  }, [navigate, page, limit, selectedStatus]);
+  }, [navigate, page, limit, selectedStatus, searchTerm, conCupon]);
 
   // Obtener pedidos paginados o resultados de búsqueda
   useEffect(() => {
@@ -151,31 +246,39 @@ export default function Pedidos() {
       setLoading(true);
       try {
         if (searchTerm.trim()) {
-          // Si el término de búsqueda es un número, buscar por ID exacto
-          const searchTermStr = searchTerm.trim();
-          const isNumericSearch = /^\d+$/.test(searchTermStr);
-
-          let results;
-          if (isNumericSearch) {
-            // Para búsqueda por ID, forzamos búsqueda exacta
-            results = await searchPedidos(searchTermStr);
-            // Si es un solo resultado, lo convertimos a array
-            const list = Array.isArray(results) ? results : [results];
-            // Filtramos por ID exacto por si la API devolvió más resultados
-            const filteredList = list.filter(p => p?.id?.toString() === searchTermStr);
-            setPedidos(filteredList);
-            setTotalOrders(filteredList.length);
-          } else {
-            // Para búsqueda por texto
-            results = await searchPedidos(searchTermStr);
-            const list = Array.isArray(results) ? results : [results];
-            setPedidos(list);
-            setTotalOrders(list.length);
-          }
+          const term = searchTerm.trim().toLowerCase();
+          const compactTerm = term.replace(/[^a-z0-9]/g, '');
+          const digitTerm = term.replace(/\D/g, '');
+          const all = await getPedidos();
+          const allList = Array.isArray(all) ? all : (all?.data || []);
+          const list = allList.filter((p: any) => {
+            const nombre = (p?.nombre_cliente || p?.cliente_nombre || p?.cliente?.nombre || '').toLowerCase();
+            const cedula = String(p?.cedula || p?.cliente_cedula || p?.cliente?.cedula || '').toLowerCase();
+            const telefono = String(p?.telefono || p?.cliente_telefono || p?.cliente?.telefono || '').toLowerCase();
+            const id = String(p?.id || '');
+            const cedulaCompact = cedula.replace(/[^a-z0-9]/g, '');
+            const telefonoDigits = telefono.replace(/\D/g, '');
+            return nombre.includes(term)
+              || cedula.includes(term)
+              || telefono.includes(term)
+              || (compactTerm.length >= 5 && cedulaCompact.includes(compactTerm))
+              || (digitTerm.length >= 7 && telefonoDigits.includes(digitTerm))
+              || id === term;
+          });
+          setSearchResults(list);
+          const shown = selectedStatus
+            ? list.filter((p: any) => String(p?.estado || p?.status || '').toLowerCase() === selectedStatus.toLowerCase())
+            : list;
+          const shownFinal = conCupon
+            ? shown.filter((p: any) => Boolean(p?.cupon_codigo))
+            : shown;
+          setPedidos(shownFinal);
+          setTotalOrders(shownFinal.length);
           setTotalPages(1);
         } else {
+          setSearchResults([]);
           // Si no hay búsqueda, usar la paginación normal
-          const { data, total } = await getPedidosPaginated(page, limit, selectedStatus);
+          const { data, total } = await getPedidosPaginated(page, limit, selectedStatus, conCupon);
           setPedidos(data);
           setTotalOrders(total);
           setTotalPages(Math.ceil(total / limit));
@@ -187,6 +290,7 @@ export default function Pedidos() {
         }
         // En caso de error, mostrar lista vacía
         setPedidos([]);
+        setSearchResults([]);
         setTotalOrders(0);
       } finally {
         setLoading(false);
@@ -198,7 +302,7 @@ export default function Pedidos() {
     }, 300); // Pequeño debounce para evitar múltiples búsquedas rápidas
 
     return () => clearTimeout(debounceTimer);
-  }, [page, limit, selectedStatus, searchTerm]);
+  }, [page, limit, selectedStatus, searchTerm, conCupon]);
 
   // Filtrado local ya no es necesario porque filtramos en servidor
   const visiblePedidos = pedidos;
@@ -222,12 +326,25 @@ export default function Pedidos() {
   };
 
   const allStatuses = ['Pendiente', 'Enviado', 'Completado', 'Cancelado'];
+  const searchStats = useMemo(() => {
+    const counts = { todos: 0, pendiente: 0, enviado: 0, completado: 0, cancelado: 0 };
+    for (const p of searchResults) {
+      counts.todos += 1;
+      const k = String(p?.estado || p?.status || '').toLowerCase();
+      if (k === 'pendiente') counts.pendiente += 1;
+      else if (k === 'enviado') counts.enviado += 1;
+      else if (k === 'completado') counts.completado += 1;
+      else if (k === 'cancelado') counts.cancelado += 1;
+    }
+    return counts;
+  }, [searchResults]);
+  const chipStats = searchTerm.trim() ? searchStats : stats;
   const countFor = (st: string) => {
     const k = st.toLowerCase();
-    if (k === 'pendiente') return stats.pendiente;
-    if (k === 'enviado') return stats.enviado;
-    if (k === 'completado') return stats.completado;
-    if (k === 'cancelado') return stats.cancelado;
+    if (k === 'pendiente') return chipStats.pendiente;
+    if (k === 'enviado') return chipStats.enviado;
+    if (k === 'completado') return chipStats.completado;
+    if (k === 'cancelado') return chipStats.cancelado;
     return 0;
   };
 
@@ -236,28 +353,27 @@ export default function Pedidos() {
   // For now, let's disable polling to avoid overwriting pagination state unexpectedly or making too many requests.
   // If real-time updates are needed, we should poll only the current page.
   useEffect(() => {
+    const hasActiveFilter = Boolean(selectedStatus) || Boolean(searchTerm.trim());
+    if (hasActiveFilter) {
+      return undefined;
+    }
+
     let polling: any = null;
     polling = setInterval(async () => {
       try {
-        // Poll current page
-        const res = await getPedidosPaginated(page, limit);
+        const res = await getPedidosPaginated(page, limit, undefined);
         const fresh = Array.isArray(res) ? res : (res?.data || []);
 
         if (Array.isArray(fresh)) {
           const sortedFresh = sortPedidosByDateDesc(fresh);
-          setPedidos((prev) => {
-            // Check if there are new orders (this logic is harder with pagination, 
-            // as new orders might push current orders to next page)
-            // For simplicity, just update the list if it changed significantly or just replace it.
-            // We won't show "new orders count" easily without a global check.
-            return sortedFresh;
-          });
+          setPedidos(sortedFresh);
           if (res && typeof res === 'object' && !Array.isArray(res)) {
             setTotalPages(res.totalPages || 1);
             setTotalOrders(res.total || fresh.length);
           }
-          try { await refreshPagosMap(); } catch (e) { console.debug(e); }
         }
+
+        try { await refreshPagosMap(); } catch (e) { console.debug(e); }
       } catch (e) {
         console.debug(e);
       }
@@ -266,51 +382,75 @@ export default function Pedidos() {
     return () => {
       if (polling) clearInterval(polling);
     };
-  }, [page, limit]);
+  }, [page, limit, selectedStatus, searchTerm]);
 
   const fmtCliente = (p: any) => p?.nombre_cliente || p?.cliente_nombre || p?.cliente?.nombre || 'Anónimo';
   const fmtFecha = (p: any) => {
     const val = p?.fecha || p?.created_at || p?.createdAt;
     if (!val) return '-';
     try {
-      return format(new Date(val), 'dd/MM/yyyy hh:mm a');
+      const raw = String(val);
+      // PostgreSQL devuelve TIMESTAMP WITHOUT TIME ZONE sin offset. Es una hora de Caracas.
+      const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+      const parsed = new Date(hasTimezone ? raw : `${raw.replace(' ', 'T')}-04:00`);
+      return format(parsed, 'dd/MM/yyyy hh:mm a');
     } catch (e) {
       return val;
     }
   };
   const fmtProductosCount = (p: any) => Array.isArray(p?.productos) ? p.productos.length : 0;
   const fmtEstado = (p: any) => p?.estado || p?.status || '-';
+  // Etiqueta del cupón aplicado: "MIRRA10 · -$10.00"
+  const fmtCupon = (p: any) => {
+    const codigo = String(p?.cupon_codigo || '').trim();
+    if (!codigo) return '';
+    const descuento = roundMoney(p?.descuento_cupon ?? 0);
+    if (descuento <= 0) return codigo;
+    return `${codigo} · -$${descuento.toFixed(2)}`;
+  };
+  // Porcentaje del cupón aplicado (para el detalle)
+  const fmtCuponPct = (p: any) => {
+    const pct = Number(p?.cupon_descuento_porcentaje);
+    if (Number.isFinite(pct) && pct > 0) return `${pct}%`;
+    const base = roundMoney(p?.total_base ?? 0);
+    const desc = roundMoney(p?.descuento_cupon ?? 0);
+    if (base > 0 && desc > 0) return `${Math.round((desc / base) * 100)}%`;
+    return null;
+  };
   const fmtTotal = (p: any) => {
-    // Obtener total base (en moneda local) como número
-    const base = (() => {
-      const t = p?.total ?? p?.monto ?? null;
-      if (typeof t === 'number') return t;
-      const tnum = Number(t);
-      if (!Number.isNaN(tnum)) return tnum;
-      if (Array.isArray(p?.productos) && p.productos.length > 0) {
-        return p.productos.reduce((acc: number, it: any) => {
-          if (typeof it.subtotal === 'number') return acc + it.subtotal;
-          const price = typeof it.precio_venta === 'number' ? it.precio_venta : Number(it.precio_venta) || 0;
-          const qty = typeof it.cantidad === 'number' ? it.cantidad : Number(it.cantidad) || 0;
-          return acc + price * qty;
-        }, 0);
-      }
-      return null;
-    })();
+    const base = roundMoney(
+      p?.total_base ??
+      (typeof p?.total === 'number'
+        ? p.total
+        : (() => {
+          const numeric = Number(p?.total);
+          return Number.isFinite(numeric) ? numeric : 0;
+        })())
+    );
+    const descuentos = roundMoney(p?.total_descuentos ?? 0);
+    const recargos = roundMoney(p?.total_recargos ?? 0);
+    const final = roundMoney(
+      p?.total_final ??
+      p?.total ??
+      (base - descuentos + recargos)
+    );
 
-    if (base === null) return '-';
-
-    // Obtener tasa (si existe)
-    const tRaw = p?.tasa_cambio_monto ?? p?.tasa ?? null;
-    const tNum = typeof tRaw === 'number' ? tRaw : (tRaw ? Number(String(tRaw).replace(',', '.')) : null);
-    const tasaVal = Number.isFinite(tNum) && tNum > 0 ? tNum : null;
-    const simbolo = p?.tasa_simbolo || (p?.tasa && p.tasa.simbolo) || 'Bs';
-
-    if (tasaVal) {
-      const converted = base * tasaVal;
-      return `$${base.toFixed(2)} x ${tasaVal.toFixed(4)} = ${simbolo} ${converted.toFixed(2)}`;
+    let label = `$${final.toFixed(2)}`;
+    if (descuentos > 0 || recargos > 0) {
+      const parts = [`$${base.toFixed(2)}`];
+      if (descuentos > 0) parts.push(`- $${descuentos.toFixed(2)}`);
+      if (recargos > 0) parts.push(`+ $${recargos.toFixed(2)}`);
+      label = `$${final.toFixed(2)} (${parts.join(' ')})`;
     }
-    return `$${base.toFixed(2)}`;
+
+    const tasaVal = fmtTasa(p);
+    if (tasaVal) {
+      const simbolo = p?.tasa_simbolo || (p?.tasa && p.tasa.simbolo) || 'Bs';
+      const converted = roundMoney(final * tasaVal);
+      label += ` • ${simbolo} ${converted.toFixed(2)}`;
+    }
+
+    return label;
   };
   const fmtTasa = (p: any) => {
     const t = p?.tasa_cambio_monto ?? p?.tasa ?? null;
@@ -318,14 +458,38 @@ export default function Pedidos() {
     return Number.isFinite(n) && n > 0 ? n : null;
   };
 
+  const fmtTotalParts = (p: any): { usd: string; bs: string | null } => {
+    const base = roundMoney(p?.total_base ?? (typeof p?.total === 'number' ? p.total : (Number(p?.total) || 0)));
+    const descuentos = roundMoney(p?.total_descuentos ?? 0);
+    const recargos = roundMoney(p?.total_recargos ?? 0);
+    const final = roundMoney(p?.total_final ?? p?.total ?? (base - descuentos + recargos));
+    const tasaVal = fmtTasa(p);
+    const usd = `$${final.toFixed(2)}`;
+    if (!tasaVal) return { usd, bs: null };
+    const simbolo = p?.tasa_simbolo || (p?.tasa && p.tasa.simbolo) || 'Bs';
+    const converted = roundMoney(final * tasaVal);
+    return { usd, bs: `${simbolo} ${converted.toFixed(2)}` };
+  };
+
   function isPedidoPaid(p: any) {
     try {
-      // Prefer explicit flag
       if (p?.pagado === true || p?.is_paid === true) return true;
-      let pagos = Array.isArray(p?.pagos) ? p.pagos : (Array.isArray(p?.pagos_venta) ? p.pagos_venta : (Array.isArray(p?.payments) ? p.payments : []));
-      // Si el mapa global de pagos ya contiene entradas para este pedido, considerarlo pagado.
+
+      let pagos = Array.isArray(p?.pagos)
+        ? p.pagos
+        : (Array.isArray(p?.pagos_venta)
+          ? p.pagos_venta
+          : (Array.isArray(p?.payments) ? p.payments : []));
+
       try {
-        const candidate = p?.id ?? p?.pedido_venta_id ?? p?.pedidoId ?? p?.venta_id ?? p?.ventaId ?? p?.order_id ?? p?.orderId;
+        const candidate =
+          p?.id ??
+          p?.pedido_venta_id ??
+          p?.pedidoId ??
+          p?.venta_id ??
+          p?.ventaId ??
+          p?.order_id ??
+          p?.orderId;
         const pidNum = Number(candidate);
         if ((!pagos || pagos.length === 0) && pagosMap && Number.isFinite(pidNum) && pidNum > 0) {
           const mapped = pagosMap[pidNum];
@@ -334,21 +498,42 @@ export default function Pedidos() {
       } catch (e) {
         // ignore mapping errors
       }
-      // fallback: usar pagosMap cargado globalmente. Soportar varias formas de identificar el id del pedido
+
       if ((!pagos || pagos.length === 0) && pagosMap) {
-        const candidate = p?.id ?? p?.pedido_venta_id ?? p?.pedidoId ?? p?.venta_id ?? p?.ventaId ?? p?.order_id ?? p?.orderId;
+        const candidate =
+          p?.id ??
+          p?.pedido_venta_id ??
+          p?.pedidoId ??
+          p?.venta_id ??
+          p?.ventaId ??
+          p?.order_id ??
+          p?.orderId;
         const pidNum = Number(candidate);
         if (Number.isFinite(pidNum) && pidNum > 0) {
           pagos = pagosMap[pidNum] || [];
         }
       }
+
       if (!pagos || pagos.length === 0) return false;
-      // calcular total base similar a fmtTotal
-      const base = (() => {
-        const t = p?.total ?? p?.monto ?? null;
-        if (typeof t === 'number') return t;
-        const tnum = Number(t);
-        if (!Number.isNaN(tnum)) return tnum;
+
+      const expectedTotal = (() => {
+        const candidates = [
+          p?.total_final,
+          p?.total,
+          p?.monto,
+          p?.monto_total,
+          p?.total_pedido,
+        ];
+        for (const candidate of candidates) {
+          if (typeof candidate === 'number' && Number.isFinite(candidate)) return candidate;
+          const numeric = Number(candidate);
+          if (Number.isFinite(numeric)) return numeric;
+        }
+        if (typeof p?.total_base === 'number' && Number.isFinite(p.total_base)) {
+          const desc = Number(p?.total_descuentos ?? 0);
+          const rec = Number(p?.total_recargos ?? 0);
+          return roundMoney(p.total_base - (Number.isFinite(desc) ? desc : 0) + (Number.isFinite(rec) ? rec : 0));
+        }
         if (Array.isArray(p?.productos) && p.productos.length > 0) {
           return p.productos.reduce((acc: number, it: any) => {
             const price = typeof it.precio_venta === 'number' ? it.precio_venta : Number(it.precio_venta) || 0;
@@ -358,15 +543,12 @@ export default function Pedidos() {
         }
         return null;
       })();
-      if (base === null) {
-        // Si el listado no incluye el total del pedido (base === null) pero sí tenemos pagos
-        // asociados (por ejemplo porque se consultaron con `getPagos()`), consideramos
-        // el pedido como pagado para efectos del badge en el listado.
-        // Esto evita mostrar "Sin pago" cuando el detalle sí contiene pagos.
+
+      if (expectedTotal === null) {
         return pagos.length > 0;
       }
+
       const tasaVal = fmtTasa(p);
-      // sumar equivalencias (si las hay) o derivarlas con tasa del pedido
       let sumEq = 0;
       let sumRawMonto = 0;
       for (const pay of pagos) {
@@ -385,14 +567,12 @@ export default function Pedidos() {
           sumEq += monto / usedT;
         }
       }
+
       const tol = 0.05;
-      // Si no pudimos derivar equivalencias (sumEq === 0) pero los pagos suman montos en la misma
-      // unidad que el pedido (no hay tasa), comparar la suma bruta de montos con el total.
       if ((!Number.isFinite(sumEq) || sumEq === 0) && (!tasaVal || Number.isNaN(Number(tasaVal)))) {
-        // comparar sumRawMonto con base
-        return Number.isFinite(sumRawMonto) && Math.abs(sumRawMonto - base) <= tol;
+        return Number.isFinite(sumRawMonto) && Math.abs(sumRawMonto - expectedTotal) <= tol;
       }
-      return Number.isFinite(sumEq) && Math.abs(sumEq - base) <= tol;
+      return Number.isFinite(sumEq) && Math.abs(sumEq - expectedTotal) <= tol;
     } catch (e) {
       return false;
     }
@@ -431,6 +611,168 @@ export default function Pedidos() {
   const [directFormas, setDirectFormas] = useState<any[]>([]);
   const [directBancoId, setDirectBancoId] = useState<number | null>(null);
   const [directFormaId, setDirectFormaId] = useState<number | null>(null);
+
+  const ensureAjustesFromPedido = React.useCallback((pedido: any) => {
+    const ajustesFromApi = Array.isArray(pedido?.ajustes)
+      ? pedido.ajustes.map(adaptAjusteFromApi)
+      : [];
+    setAjustesDraft(ajustesFromApi);
+    setAjustesDirty(false);
+    setAjustesError(null);
+  }, []);
+
+  const ajustesPreview = React.useMemo(() => {
+    const base = Number(selectedPedido?.total_base ?? 0);
+    return computeAjustesSummary(base, ajustesDraft);
+  }, [selectedPedido, ajustesDraft]);
+
+  const handleAddAjuste = () => {
+    setAjustesDraft((prev) => [
+      ...prev,
+      { tipo: 'descuento', modo: 'porcentaje', valor: 5, motivo: '' },
+    ]);
+    setAjustesDirty(true);
+  };
+
+  const handleAjusteChange = (index: number, field: keyof AjusteDraft, value: any) => {
+    setAjustesDraft((prev) =>
+      prev.map((item, idx) => {
+        if (idx !== index) return item;
+        if (field === 'valor') {
+          const num = Number(value);
+          return { ...item, valor: Number.isFinite(num) && num >= 0 ? num : 0 };
+        }
+        if (field === 'tipo') {
+          return { ...item, tipo: value === 'recargo' ? 'recargo' : 'descuento' };
+        }
+        if (field === 'modo') {
+          return { ...item, modo: value === 'monto' ? 'monto' : 'porcentaje' };
+        }
+        if (field === 'motivo') {
+          return { ...item, motivo: String(value ?? '') };
+        }
+        return item;
+      })
+    );
+    setAjustesDirty(true);
+  };
+
+  const handleRemoveAjuste = (index: number) => {
+    setAjustesDraft((prev) => prev.filter((_, idx) => idx !== index));
+    setAjustesDirty(true);
+  };
+
+  const handleResetAjustes = () => {
+    if (!selectedPedido) return;
+    ensureAjustesFromPedido(selectedPedido);
+  };
+
+  const handleSaveAjustes = async () => {
+    if (!selectedPedido?.id) {
+      toast.error('Selecciona un pedido antes de guardar ajustes');
+      return;
+    }
+    if (ajustesSaving) return;
+
+    const currentId = selectedPedido.id;
+    const sanitized = ajustesDraft.map((aj) => ({
+      tipo: aj.tipo,
+      modo: aj.modo,
+      valor: roundMoney(aj.valor),
+      motivo: aj.motivo.trim(),
+    }));
+
+    if (sanitized.some((aj) => aj.valor <= 0)) {
+      setAjustesError('Cada ajuste debe tener un valor mayor a cero.');
+      return;
+    }
+    if (sanitized.some((aj) => !aj.motivo)) {
+      setAjustesError('Cada ajuste debe incluir un motivo.');
+      return;
+    }
+
+    setAjustesError(null);
+    setAjustesSaving(true);
+    try {
+      const response = await updatePedidoAjustes(currentId, sanitized);
+      const ajustesResponse = Array.isArray(response?.ajustes) ? response.ajustes : [];
+      const adapted = ajustesResponse.map(adaptAjusteFromApi);
+
+      setSelectedPedido((prev) => {
+        if (!prev || prev.id !== currentId) return prev;
+        const total_base = roundMoney(response?.total_base ?? prev.total_base ?? prev.total ?? 0);
+        const total_descuentos = roundMoney(response?.total_descuentos ?? prev.total_descuentos ?? 0);
+        const total_recargos = roundMoney(response?.total_recargos ?? prev.total_recargos ?? 0);
+        const total_final = roundMoney(response?.total_final ?? response?.total ?? prev.total_final ?? prev.total ?? 0);
+        return {
+          ...prev,
+          ajustes: ajustesResponse,
+          total_base,
+          total_descuentos,
+          total_recargos,
+          total_final,
+          total: total_final,
+        };
+      });
+
+      setPedidos((list) =>
+        list.map((p) => {
+          if (p.id !== currentId) return p;
+          const total_base = roundMoney(response?.total_base ?? p.total_base ?? p.total ?? 0);
+          const total_descuentos = roundMoney(response?.total_descuentos ?? p.total_descuentos ?? 0);
+          const total_recargos = roundMoney(response?.total_recargos ?? p.total_recargos ?? 0);
+          const total_final = roundMoney(response?.total_final ?? response?.total ?? p.total_final ?? p.total ?? 0);
+          return {
+            ...p,
+            ajustes: ajustesResponse,
+            total_base,
+            total_descuentos,
+            total_recargos,
+            total_final,
+            total: total_final,
+          };
+        })
+      );
+
+      setAjustesDraft(adapted);
+      setAjustesDirty(false);
+      setAjustesError(null);
+      toast.success('Ajustes actualizados');
+    } catch (err: any) {
+      const message = parseApiError(err) || (err?.message ?? 'Error guardando ajustes');
+      setAjustesError(message);
+      toast.error(message);
+    } finally {
+      setAjustesSaving(false);
+    }
+  };
+
+  const persistedTotals = React.useMemo(() => {
+    if (!selectedPedido) return { base: 0, descuentos: 0, recargos: 0, final: 0 };
+    const base = roundMoney(selectedPedido?.total_base ?? selectedPedido?.total ?? 0);
+    const descuentos = roundMoney(selectedPedido?.total_descuentos ?? 0);
+    const recargos = roundMoney(selectedPedido?.total_recargos ?? 0);
+    const final = roundMoney(selectedPedido?.total_final ?? selectedPedido?.total ?? base);
+    return { base, descuentos, recargos, final };
+  }, [selectedPedido]);
+
+  // Datos del cupón aplicado al pedido abierto
+  const cuponDetalle = React.useMemo(() => {
+    if (!selectedPedido) return null;
+    const codigo = String(selectedPedido?.cupon_codigo || '').trim();
+    const descuento = roundMoney(selectedPedido?.descuento_cupon ?? 0);
+    if (!codigo || descuento <= 0) return null;
+    return {
+      codigo,
+      descuento,
+      pct: fmtCuponPct(selectedPedido),
+      colaborador: selectedPedido?.cupon_colaborador_nombre || null,
+      descripcion: selectedPedido?.cupon_descripcion || null,
+    };
+  }, [selectedPedido]);
+
+  const tasaActual = fmtTasa(selectedPedido);
+  const tasaSimbolo = selectedPedido?.tasa_simbolo || (selectedPedido?.tasa && selectedPedido.tasa.simbolo) || 'Bs';
   const [directLoading, setDirectLoading] = useState(false);
   // Ordenes de producción detalladas asociadas al pedido abierto
   const [ordenesDetailed, setOrdenesDetailed] = useState<any[]>([]);
@@ -459,6 +801,9 @@ export default function Pedidos() {
   const [presentacionesOptions, setPresentacionesOptions] = useState<any[]>([]);
   const [addPresentacionId, setAddPresentacionId] = useState<number | null>(null);
   const [productosOptions, setProductosOptions] = useState<any[]>([]);
+  const [productSearchTerm, setProductSearchTerm] = useState<string>('');
+  const [productSearchLoading, setProductSearchLoading] = useState<boolean>(false);
+  const [showProductDropdown, setShowProductDropdown] = useState<boolean>(false);
   const [addSubmitting, setAddSubmitting] = useState<boolean>(false);
   // Cuando cambie la cantidad a producir, recalcular las cantidades sugeridas
   // Cuando cambie la cantidad a producir, recalcular las cantidades sugeridas
@@ -770,8 +1115,19 @@ export default function Pedidos() {
   }, []);
 
   // Cargar lista de productos para agregar (cuando se abre el modal)
-  const loadProductosOptions = async () => {
+  // Preferir el catálogo público (rápido, sin token). Hacemos fallback a /productos protegido.
+  const loadProductosOptions = async (force = false) => {
     try {
+      if (!force && Array.isArray(productosOptions) && productosOptions.length > 0) return;
+      try {
+        const res: any = await getCatalogoPaginated({ includeOutOfStock: true, limit: 1000 });
+        const list = Array.isArray(res) ? res : (res?.items || res?.data || []);
+        setProductosOptions(list || []);
+        return;
+      } catch (errCat) {
+        console.debug('getCatalogoPaginated falló, intentando fallback a /productos:', errCat);
+      }
+
       const res = await getProductos();
       const list = Array.isArray(res) ? res : (res?.data || res?.items || []);
       setProductosOptions(list || []);
@@ -781,15 +1137,54 @@ export default function Pedidos() {
     }
   };
 
+  // Debounced search: cuando el usuario escribe en el campo de búsqueda del modal
+  useEffect(() => {
+    let mounted = true;
+    const term = (productSearchTerm || '').toString().trim();
+    const handle = setTimeout(async () => {
+      if (!mounted) return;
+      if (!term || term.length < 2) {
+        // si el término es muy corto, mostrar la lista cargada inicialmente
+        // (no disparar búsqueda en servidor)
+        return;
+      }
+      setProductSearchLoading(true);
+      try {
+        const res: any = await getCatalogoPaginated({ q: term, includeOutOfStock: true, limit: 50 });
+        const list = Array.isArray(res) ? res : (res?.items || res?.data || []);
+        if (!mounted) return;
+        setProductosOptions(list || []);
+        setShowProductDropdown(true);
+      } catch (err) {
+        console.debug('Error buscando productos:', err);
+      } finally {
+        if (mounted) setProductSearchLoading(false);
+      }
+    }, 300);
+    return () => { mounted = false; clearTimeout(handle); };
+  }, [productSearchTerm]);
+
   const loadPresentacionesForProduct = async (productId: number) => {
     try {
+      // Si el catálogo ya devolvió fórmulas adjuntas al producto, las usamos directamente
+      const prod = (productosOptions || []).find((p: any) => Number(p.id) === Number(productId));
+      if (prod) {
+        const variantes = Array.isArray(prod.formulas) && prod.formulas.length > 0 ? prod.formulas : (Array.isArray(prod.tamanos) ? prod.tamanos : []);
+        if (Array.isArray(variantes) && variantes.length > 0) {
+          const opts = variantes.map((f: any) => ({ id: f.id, nombre: f.nombre ?? f.titulo ?? f.nombre ?? `#${f.id}`, precio_venta: f.precio_venta ?? f.precio ?? f.precio_calculado ?? null }));
+          setPresentacionesOptions(opts);
+          setAddPresentacionId(opts.length > 0 ? opts[0].id : null);
+          setAddPrecio(opts.length > 0 ? (opts[0].precio_venta ?? null) : null);
+          return;
+        }
+      }
+
+      // Fallback: obtener fórmulas globalmente y filtrar
       const res = await getFormulas();
       const list = Array.isArray(res) ? res : (res?.data || res?.items || []);
       const matches = (list || []).filter((f: any) => Number(f.producto_terminado_id ?? f.producto_id) === Number(productId));
-      // Map to presentacion objects with id, nombre, precio_venta
-      const opts = matches.map((f: any) => ({ id: f.id, nombre: f.nombre ?? f.titulo ?? `#${f.id}`, precio_venta: f.precio_venta ?? f.precio ?? null }));
+      const opts = matches.map((f: any) => ({ id: f.id, nombre: f.nombre ?? `#${f.id}`, precio_venta: f.precio_venta ?? null }));
       setPresentacionesOptions(opts);
-      // reset selection
       setAddPresentacionId(opts.length > 0 ? opts[0].id : null);
       setAddPrecio(opts.length > 0 ? (opts[0].precio_venta ?? null) : null);
     } catch (e) {
@@ -860,6 +1255,7 @@ export default function Pedidos() {
 
         console.debug('detalle-pago-check', { id, base, tasaVal, sumEq, sumRaw, pagosCount: pagosList.length, computedPaid });
         setSelectedPedido(detalle);
+        ensureAjustesFromPedido(detalle);
         // Cargar órdenes de producción detalladas asociadas a este pedido
         (async () => {
           try {
@@ -959,16 +1355,11 @@ export default function Pedidos() {
             setOrdenesDetailed([]);
           }
         })();
-        // Si el pedido trae pagos, abrir la vista de pagos automáticamente
-        try {
-          const hasPagos = Array.isArray(detalle?.pagos) && detalle.pagos.length > 0;
-          setShowPaymentsView(Boolean(hasPagos));
-        } catch (e) {
-          setShowPaymentsView(false);
-        }
+        setShowPaymentsView(false);
       } catch (errInner) {
         // si algo falla en diagnóstico, continuar mostrando detalle
         setSelectedPedido(detalle);
+        ensureAjustesFromPedido(detalle);
         setShowPaymentsView(Array.isArray(detalle?.pagos) && detalle.pagos.length > 0);
       }
       setIsDetailOpen(true);
@@ -988,6 +1379,9 @@ export default function Pedidos() {
   const closeDetalle = () => {
     setIsDetailOpen(false);
     setSelectedPedido(null);
+    setAjustesDraft([]);
+    setAjustesDirty(false);
+    setAjustesError(null);
   };
 
   async function handleCompletarPedido() {
@@ -1000,6 +1394,10 @@ export default function Pedidos() {
   async function completarSinPago() {
     if (!selectedPedido?.id) return;
     if (!selectedPedido?.id) return;
+    if (ajustesDirty) {
+      toast.error('Guarda los ajustes antes de completar el pedido');
+      return;
+    }
 
     // Intentar completar órdenes de producción existentes asociadas al pedido.
     // Esto cubre casos donde la orden existe pero está en estado 'Pendiente' en la BD.
@@ -1187,9 +1585,43 @@ export default function Pedidos() {
     setCompleting(true);
     try {
       const resp = await completarPedidoVenta(selectedPedido.id);
+      const total_base = roundMoney(resp?.total_base ?? selectedPedido.total_base ?? selectedPedido.total ?? 0);
+      const total_descuentos = roundMoney(resp?.total_descuentos ?? selectedPedido.total_descuentos ?? 0);
+      const total_recargos = roundMoney(resp?.total_recargos ?? selectedPedido.total_recargos ?? 0);
+      const total_final = roundMoney(resp?.total_final ?? resp?.total ?? selectedPedido.total_final ?? selectedPedido.total ?? 0);
       toast.success('Pedido completado');
-      setSelectedPedido((s: any) => s ? { ...s, estado: 'Completado' } : s);
-      setPedidos((list) => list.map((p) => (p.id === selectedPedido.id ? { ...p, estado: 'Completado' } : p)));
+      const currentId = selectedPedido.id;
+      setSelectedPedido((s: any) => {
+        if (!s || s.id !== currentId) return s;
+        return {
+          ...s,
+          estado: 'Completado',
+          ajustes: Array.isArray(resp?.ajustes) ? resp.ajustes : s.ajustes,
+          total_base,
+          total_descuentos,
+          total_recargos,
+          total_final,
+          total: total_final,
+        };
+      });
+      setPedidos((list) =>
+        list.map((p) => {
+          if (p.id !== currentId) return p;
+          return {
+            ...p,
+            estado: 'Completado',
+            ajustes: Array.isArray(resp?.ajustes) ? resp.ajustes : p.ajustes,
+            total_base,
+            total_descuentos,
+            total_recargos,
+            total_final,
+            total: total_final,
+          };
+        })
+      );
+      if (Array.isArray(resp?.ajustes)) {
+        ensureAjustesFromPedido({ ajustes: resp.ajustes });
+      }
       setShowPaymentInline(false);
       setIsDetailOpen(false);
     } catch (err) {
@@ -1299,7 +1731,7 @@ export default function Pedidos() {
             <div className="relative">
               <input
                 type="text"
-                placeholder="Buscar por ID, nombre o cédula..."
+                placeholder="Buscar por nombre, cédula o teléfono..."
                 className="w-full pl-4 pr-10 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-transparent"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -1315,120 +1747,240 @@ export default function Pedidos() {
           </form>
         </div>
 
-        {/* Filtros rápidos por estado (ubicados arriba del listado) */}
-        <div className="flex gap-2">
-          <Button size="sm" variant={selectedStatus === '' ? 'default' : 'ghost'} onClick={() => setSelectedStatus('')}>Todos ({pedidos.length})</Button>
-          {allStatuses.map((s) => (
-            <Button key={s} size="sm" variant={selectedStatus === s ? 'default' : 'ghost'} onClick={() => setSelectedStatus(selectedStatus === s ? '' : s)}>
-              <div className="flex items-center gap-2">
-                <Badge variant={estadoColor(s.toLowerCase()) as any}>{s}</Badge>
-                <span className="text-sm text-muted-foreground">{countFor(s)}</span>
-              </div>
-            </Button>
-          ))}
+        {/* Filtros rápidos por estado — scroll horizontal en móvil */}
+        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-1">
+          <div className="flex gap-0.5 bg-card border border-border rounded-[10px] p-[3px] w-fit min-w-max">
+            <button
+              className={`flex items-center gap-1.5 px-3 py-[5px] rounded-[7px] text-sm transition-colors duration-150 min-h-[36px] ${selectedStatus === '' ? 'bg-foreground text-background font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => setSelectedStatus('')}
+            >
+              Todos <span className="text-xs opacity-60">{chipStats.todos}</span>
+            </button>
+            {allStatuses.map((s) => (
+              <button
+                key={s}
+                className={`flex items-center gap-1.5 px-3 py-[5px] rounded-[7px] text-sm transition-colors duration-150 min-h-[36px] ${selectedStatus === s ? 'bg-foreground text-background font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => setSelectedStatus(selectedStatus === s ? '' : s)}
+              >
+                <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDotClass(s)}`} />
+                {s} <span className="text-xs opacity-60">{countFor(s)}</span>
+              </button>
+            ))}
+            <button
+              className={`flex items-center gap-1.5 px-3 py-[5px] rounded-[7px] text-sm transition-colors duration-150 min-h-[36px] ${conCupon ? 'bg-foreground text-background font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+              onClick={() => { setConCupon((prev) => !prev); setPage(1); }}
+              title="Mostrar solo pedidos con cupón aplicado"
+            >
+              <TicketPercent className="w-3.5 h-3.5" />
+              Con cupón <span className="text-xs opacity-60">{cuponesTotales.pedidos}</span>
+            </button>
+          </div>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Pedidos</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div>Cargando pedidos...</div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Cliente</TableHead>
-                    <TableHead>Fecha</TableHead>
-                    <TableHead>Estado</TableHead>
-                    <TableHead>#Productos</TableHead>
-                    <TableHead>Tasa</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortPedidosByDateDesc(visiblePedidos).map((p: any) => (
-                    <TableRow key={p.id || JSON.stringify(p)} className={getRowClasses(p)}>
-                      <TableCell className="font-mono text-sm">{p.id ?? '-'}</TableCell>
-                      <TableCell>{fmtCliente(p)}</TableCell>
-                      <TableCell>{fmtFecha(p)}</TableCell>
-                      <TableCell>
-                        <div className="inline-flex items-center gap-2">
-                          <Badge className="px-2 py-0.5" variant={estadoColor(fmtEstado(p)) as any}>{fmtEstado(p)}</Badge>
-                          {fmtEstado(p).toString().toLowerCase() === 'completado' && (
-                            isPedidoPaid(p) ? (
-                              <Badge className="ml-2 bg-green-600 text-white" variant="default">Pagado</Badge>
-                            ) : (
-                              <Badge className="ml-2" variant="destructive">Sin pago</Badge>
-                            )
-                          )}
+        {/* Resumen de descuentos aplicados por cupón */}
+        {cuponesTotales.pedidos > 0 && (
+          <div className="rounded-[10px] border border-border bg-card px-4 py-3">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Descuentos por cupón</p>
+                <p className="text-lg font-semibold tabular-nums">
+                  ${roundMoney(cuponesTotales.descuento).toFixed(2)}
+                  <span className="text-xs font-normal text-muted-foreground ml-1.5">
+                    en {cuponesTotales.pedidos} {cuponesTotales.pedidos === 1 ? 'pedido' : 'pedidos'}
+                  </span>
+                </p>
+              </div>
+              {cuponesResumen.map((c: any) => (
+                <div key={`${c.cupon_id ?? 's/c'}-${c.codigo}`} className="text-xs">
+                  <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 font-medium text-amber-800">
+                    <TicketPercent className="w-3 h-3" />
+                    {c.codigo}
+                    {c.descuento_porcentaje != null && ` · ${c.descuento_porcentaje}%`}
+                  </span>
+                  <span className="ml-1.5 text-muted-foreground tabular-nums">
+                    {c.pedidos} {c.pedidos === 1 ? 'pedido' : 'pedidos'} · -${roundMoney(c.descuento_total).toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <TableSkeleton columns={8} rows={10} />
+        ) : (
+          <>
+            {/* ── Móvil: tarjetas ── */}
+            <div className="flex flex-col gap-3 sm:hidden">
+              {sortPedidosByDateDesc(visiblePedidos).map((p: any) => {
+                const totalParts = fmtTotalParts(p);
+                const estado = fmtEstado(p);
+                return (
+                  <Card key={p.id || JSON.stringify(p)} className="overflow-hidden">
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold truncate">{fmtCliente(p)}</p>
+                          <p className="text-xs text-muted-foreground tabular-nums mt-0.5">{fmtFecha(p)}</p>
                         </div>
-                      </TableCell>
-                      <TableCell>{fmtProductosCount(p)}</TableCell>
-                      <TableCell>{(fmtTasa(p) || 0).toFixed(2)}</TableCell>
-                      <TableCell>{fmtTotal(p)}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openDetalle(p.id); }}>
-                            <Eye className="w-4 h-4" />
-                          </Button>
+                        <span className="text-xs tabular-nums text-muted-foreground shrink-0">#{p.id ?? '-'}</span>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 px-2 py-[3px] rounded-full text-[11.5px] font-medium ${statusBadgeClass(estado)}`}>
+                          <span className={`inline-block w-[5px] h-[5px] rounded-full flex-shrink-0 ${statusDotClass(estado)}`} />
+                          {estado}
+                        </span>
+                        {estado.toLowerCase() === 'completado' && (
+                          isPedidoPaid(p) ? (
+                            <span className="inline-flex items-center px-1.5 py-[2px] rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200">Pagado</span>
+                          ) : (
+                            <span className="inline-flex items-center px-1.5 py-[2px] rounded-full text-[10px] font-medium bg-red-50 text-red-600 border border-red-200">Sin pago</span>
+                          )
+                        )}
+                        <span className="text-xs text-muted-foreground">{fmtProductosCount(p)} prod.</span>
+                        {fmtCupon(p) && (
+                          <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[10.5px] font-medium text-amber-800">
+                            <TicketPercent className="w-3 h-3" />
+                            {fmtCupon(p)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-3 flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold tabular-nums">{totalParts.usd}</p>
+                          {totalParts.bs && <p className="text-[11px] text-muted-foreground tabular-nums">{totalParts.bs}</p>}
                         </div>
-                      </TableCell>
+                        <Button size="sm" variant="outline" className="h-10 px-4 gap-1.5" onClick={() => openDetalle(p.id)}>
+                          <Eye className="w-3.5 h-3.5" /> Ver
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+              {visiblePedidos.length === 0 && (
+                <p className="py-8 text-center text-sm text-muted-foreground">No hay pedidos para mostrar.</p>
+              )}
+            </div>
+
+            {/* ── Desktop: tabla ── */}
+            <Card className="hidden sm:block overflow-hidden">
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent border-b border-border">
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3 pl-6 w-16">ID</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Cliente</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Fecha</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Estado</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3 text-right">Prods.</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3 text-right">Tasa</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3 text-right">Total</TableHead>
+                      <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3 text-center w-12"></TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {sortPedidosByDateDesc(visiblePedidos).map((p: any) => {
+                      const totalParts = fmtTotalParts(p);
+                      const estado = fmtEstado(p);
+                      return (
+                        <TableRow key={p.id || JSON.stringify(p)} className={getRowClasses(p)}>
+                          <TableCell className="text-xs tabular-nums text-muted-foreground pl-6">#{p.id ?? '-'}</TableCell>
+                          <TableCell className="font-medium text-sm">{fmtCliente(p)}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground tabular-nums">{fmtFecha(p)}</TableCell>
+                          <TableCell>
+                            <div className="inline-flex items-center gap-1.5">
+                              <span className={`inline-flex items-center gap-1 px-2 py-[3px] rounded-full text-[11.5px] font-medium ${statusBadgeClass(estado)}`}>
+                                <span className={`inline-block w-[5px] h-[5px] rounded-full flex-shrink-0 ${statusDotClass(estado)}`} />
+                                {estado}
+                              </span>
+                              {estado.toLowerCase() === 'completado' && (
+                                isPedidoPaid(p) ? (
+                                  <span className="inline-flex items-center px-1.5 py-[2px] rounded-full text-[10px] font-medium bg-green-100 text-green-700 border border-green-200">Pagado</span>
+                                ) : (
+                                  <span className="inline-flex items-center px-1.5 py-[2px] rounded-full text-[10px] font-medium bg-red-50 text-red-600 border border-red-200">Sin pago</span>
+                                )
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm tabular-nums text-right">{fmtProductosCount(p)}</TableCell>
+                          <TableCell className="text-xs tabular-nums text-muted-foreground text-right">{fmtTasa(p) ? fmtTasa(p)!.toFixed(2) : '—'}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="text-sm font-medium tabular-nums">{totalParts.usd}</div>
+                            {totalParts.bs && <div className="text-[11px] text-muted-foreground tabular-nums mt-0.5">{totalParts.bs}</div>}
+                            {fmtCupon(p) && (
+                              <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-[1px] text-[10.5px] font-medium text-amber-800">
+                                <TicketPercent className="w-3 h-3" />
+                                {fmtCupon(p)}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 rounded-md text-muted-foreground hover:text-foreground" onClick={(e) => { e.stopPropagation(); openDetalle(p.id); }}>
+                              <Eye className="w-[15px] h-[15px]" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </>
+        )}
 
         {/* Pagination Controls */}
-        <div className="flex items-center justify-between mt-4">
-          <div className="text-sm text-muted-foreground">
-            Mostrando página {page} de {totalPages} ({totalOrders} pedidos)
+        <div className="flex items-center justify-between mt-4 gap-2">
+          <div className="text-xs text-muted-foreground hidden sm:block">
+            Página {page} de {totalPages} ({totalOrders} pedidos)
+          </div>
+          <div className="text-xs text-muted-foreground sm:hidden">
+            {page}/{totalPages}
           </div>
           <div className="flex items-center gap-1">
             <Button
               variant="outline"
               size="sm"
+              className="h-9 w-9 p-0"
               onClick={() => setPage(p => Math.max(1, p - 1))}
               disabled={page === 1 || loading}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
 
-            {/* Page Numbers */}
-            {(() => {
-              const items = [];
-              const maxVisible = 5;
-              let start = Math.max(1, page - 2);
-              let end = Math.min(totalPages, start + maxVisible - 1);
-              if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
+            {/* Page Numbers — ocultar en móvil, mostrar en sm+ */}
+            <div className="hidden sm:flex items-center gap-1">
+              {(() => {
+                const items = [];
+                const maxVisible = 5;
+                let start = Math.max(1, page - 2);
+                let end = Math.min(totalPages, start + maxVisible - 1);
+                if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
 
-              if (start > 1) {
-                items.push(<Button key={1} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setPage(1)}>1</Button>);
-                if (start > 2) items.push(<span key="d1" className="px-1 text-muted-foreground">...</span>);
-              }
+                if (start > 1) {
+                  items.push(<Button key={1} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setPage(1)}>1</Button>);
+                  if (start > 2) items.push(<span key="d1" className="px-1 text-muted-foreground">...</span>);
+                }
 
-              for (let i = start; i <= end; i++) {
-                items.push(
-                  <Button key={i} variant={i === page ? 'default' : 'outline'} size="sm" className="w-8 h-8 p-0" onClick={() => setPage(i)}>{i}</Button>
-                );
-              }
+                for (let i = start; i <= end; i++) {
+                  items.push(
+                    <Button key={i} variant={i === page ? 'default' : 'outline'} size="sm" className="w-8 h-8 p-0" onClick={() => setPage(i)}>{i}</Button>
+                  );
+                }
 
-              if (end < totalPages) {
-                if (end < totalPages - 1) items.push(<span key="d2" className="px-1 text-muted-foreground">...</span>);
-                items.push(<Button key={totalPages} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setPage(totalPages)}>{totalPages}</Button>);
-              }
-              return items;
-            })()}
+                if (end < totalPages) {
+                  if (end < totalPages - 1) items.push(<span key="d2" className="px-1 text-muted-foreground">...</span>);
+                  items.push(<Button key={totalPages} variant="outline" size="sm" className="w-8 h-8 p-0" onClick={() => setPage(totalPages)}>{totalPages}</Button>);
+                }
+                return items;
+              })()}
+            </div>
 
             <Button
               variant="outline"
               size="sm"
+              className="h-9 w-9 p-0"
               onClick={() => setPage(p => Math.min(totalPages, p + 1))}
               disabled={page === totalPages || loading}
             >
@@ -1441,7 +1993,7 @@ export default function Pedidos() {
 
         {/* Detalle del pedido en modal */}
         <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
-          <DialogContent className="max-w-6xl h-[90vh] flex flex-col p-0 gap-0 bg-white shadow-2xl overflow-hidden sm:rounded-xl transition-all duration-200">
+          <DialogContent className="max-w-6xl h-[100dvh] sm:h-[90vh] w-full sm:w-auto flex flex-col p-0 gap-0 bg-white shadow-2xl overflow-hidden rounded-none sm:rounded-xl transition-all duration-200">
             <DialogHeader className="p-5 border-b shrink-0 bg-white z-10 space-y-2">
               <DialogTitle className="text-xl font-bold flex items-center gap-2">
                 <span>Pedido #{selectedPedido?.id ?? ''}</span>
@@ -1466,9 +2018,18 @@ export default function Pedidos() {
                   <span>Cargando...</span>
                 )}
               </DialogDescription>
+              {cuponDetalle && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  <TicketPercent className="w-4 h-4 shrink-0" />
+                  <span className="font-medium">Cupón {cuponDetalle.codigo} aplicado</span>
+                  {cuponDetalle.pct && <span>· {cuponDetalle.pct} de descuento</span>}
+                  <span>· -{cuponDetalle.descuento.toFixed(2)}</span>
+                  {cuponDetalle.colaborador && <span>· {cuponDetalle.colaborador}</span>}
+                </div>
+              )}
             </DialogHeader>
 
-            <div className={`flex-1 overflow-y-auto p-4 sm:p-6 bg-gray-50/50 space-y-6 min-h-0 ${showPaymentInline ? 'hidden' : ''}`}>
+            <div id="modal-scroll-container" className={`flex-1 overflow-y-auto p-4 sm:p-6 bg-gray-50/50 space-y-6 min-h-0 ${showPaymentInline ? 'hidden' : ''}`}>
               {detailLoading ? (
                 <div className="flex items-center justify-center py-20 text-gray-400">
                   <Loader2 className="w-8 h-8 animate-spin mr-2" />
@@ -1479,7 +2040,7 @@ export default function Pedidos() {
                   <div className="flex justify-between items-center">
                     <div />
                     <div>
-                      <Button size="sm" variant="outline" onClick={async () => { await loadProductosOptions(); setAddProductId(null); setAddPresentacionId(null); setAddPrecio(null); setAddCantidad(1); setAddModalOpen(true); }}>Agregar producto</Button>
+                      <Button size="sm" variant="outline" onClick={async () => { await loadProductosOptions(); setAddProductId(null); setAddPresentacionId(null); setAddPrecio(null); setAddCantidad(1); setProductSearchTerm(''); setShowProductDropdown(false); setAddModalOpen(true); }}>Agregar producto</Button>
                     </div>
                   </div>
                   <div className="overflow-auto">
@@ -1500,15 +2061,15 @@ export default function Pedidos() {
                           <tr key={it.id} className="border-t">
                             <td className="py-2 w-16">
                               <div className="w-12 h-12 rounded overflow-hidden bg-gray-100">
-                                <img src={getImageUrl(it)} alt={it.producto_nombre || ''} className="w-full h-full object-cover" onError={(e) => { 
-                                const t = e.currentTarget as HTMLImageElement; 
-                                t.onerror = null; 
-                                // Usar una imagen aleatoria del asset folder como fallback
-                                const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
-                                const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
-                                t.src = randomFallback; 
-                                console.error('[Pedidos] image load failed, using fallback:', t.src); 
-                              }} />
+                                <img src={getImageUrl(it)} alt={it.producto_nombre || ''} className="w-full h-full object-cover" onError={(e) => {
+                                  const t = e.currentTarget as HTMLImageElement;
+                                  t.onerror = null;
+                                  // Usar una imagen aleatoria del asset folder como fallback
+                                  const fallbackImages = ['/asset/muestra1.jpeg', '/asset/muestra2.jpeg', '/asset/muestra3.jpeg', '/asset/muestra4.jpeg'];
+                                  const randomFallback = fallbackImages[Math.floor(Math.random() * fallbackImages.length)];
+                                  t.src = randomFallback;
+                                  console.error('[Pedidos] image load failed, using fallback:', t.src);
+                                }} />
                               </div>
                             </td>
                             <td className="py-2 align-top">
@@ -1608,30 +2169,132 @@ export default function Pedidos() {
                     </table>
                   </div>
 
-                  <div className="flex justify-end">
-                    <div className="text-right">
-                      <div className="text-sm text-muted-foreground">Total</div>
-                      <div className="text-lg font-semibold">{typeof selectedPedido.total === 'number' ? `$${selectedPedido.total.toFixed(2)}` : selectedPedido.total}</div>
-                      {/* Mostrar convertido si hay tasa aplicada */}
-                      {(() => {
-                        const base = (typeof selectedPedido.total === 'number') ? selectedPedido.total : (Number(selectedPedido.total) || null);
-                        const t = selectedPedido?.tasa_cambio_monto ?? selectedPedido?.tasa ?? null;
-                        const tn = typeof t === 'number' ? t : (t ? Number(String(t).replace(',', '.')) : null);
-                        const tasaVal = Number.isFinite(tn) && tn > 0 ? tn : null;
-                        const simbolo = selectedPedido?.tasa_simbolo || (selectedPedido?.tasa && selectedPedido.tasa.simbolo) || 'Bs';
-                        if (base && tasaVal) {
-                          const conv = base * tasaVal;
-                          return (
-                            <div className="text-sm text-muted-foreground">Convertido: <strong>{simbolo} {conv.toFixed(2)}</strong> </div>
-                          );
-                        }
-                        return null;
-                      })()}
+                  <div className="space-y-4">
+                    <div className="bg-white border rounded p-4 shadow-sm">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <h3 className="text-base font-semibold">Descuentos y recargos</h3>
+                        {ajustesDirty && (
+                          <Badge variant="secondary" className="bg-amber-200 text-amber-900">Cambios sin guardar</Badge>
+                        )}
+                      </div>
+                      {ajustesDraft.length === 0 ? (
+                        <div className="mt-3 text-sm text-muted-foreground">No hay ajustes registrados para este pedido.</div>
+                      ) : (
+                        <div className="mt-3 space-y-3">
+                          {ajustesDraft.map((ajuste, index) => {
+                            const previewRow = ajustesPreview.ajustes[index];
+                            return (
+                              <div key={ajuste.id ?? `ajuste-${index}`} className="grid grid-cols-12 gap-2 items-end">
+                                <div className="col-span-2">
+                                  <label className="text-xs text-muted-foreground">Tipo</label>
+                                  <select
+                                    value={ajuste.tipo}
+                                    onChange={(e) => handleAjusteChange(index, 'tipo', e.target.value)}
+                                    className="w-full border rounded px-2 py-1 text-sm"
+                                  >
+                                    <option value="descuento">Descuento</option>
+                                    <option value="recargo">Recargo</option>
+                                  </select>
+                                </div>
+                                <div className="col-span-2">
+                                  <label className="text-xs text-muted-foreground">Modo</label>
+                                  <select
+                                    value={ajuste.modo}
+                                    onChange={(e) => handleAjusteChange(index, 'modo', e.target.value)}
+                                    className="w-full border rounded px-2 py-1 text-sm"
+                                  >
+                                    <option value="porcentaje">%</option>
+                                    <option value="monto">Monto</option>
+                                  </select>
+                                </div>
+                                <div className="col-span-2">
+                                  <label className="text-xs text-muted-foreground">{ajuste.modo === 'porcentaje' ? 'Porcentaje' : 'Monto ($)'}</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={ajuste.valor}
+                                    onChange={(e) => handleAjusteChange(index, 'valor', e.target.value)}
+                                    className="w-full border rounded px-2 py-1 text-sm"
+                                  />
+                                </div>
+                                <div className="col-span-4">
+                                  <label className="text-xs text-muted-foreground">Motivo</label>
+                                  <input
+                                    type="text"
+                                    value={ajuste.motivo}
+                                    onChange={(e) => handleAjusteChange(index, 'motivo', e.target.value)}
+                                    className="w-full border rounded px-2 py-1 text-sm"
+                                    placeholder="Ej. Descuento promocional"
+                                  />
+                                </div>
+                                <div className="col-span-1 text-right text-sm font-medium">
+                                  {previewRow ? `$${previewRow.monto_aplicado.toFixed(2)}` : '$0.00'}
+                                </div>
+                                <div className="col-span-1 flex justify-end">
+                                  <Button size="sm" variant="ghost" onClick={() => handleRemoveAjuste(index)} className="text-red-500 hover:text-red-600">
+                                    Quitar
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="mt-4 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={handleAddAjuste}>Agregar ajuste</Button>
+                          <Button size="sm" variant="ghost" onClick={handleResetAjustes} disabled={!ajustesDirty}>Restablecer</Button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {ajustesError && <span className="text-xs text-red-500">{ajustesError}</span>}
+                          <Button size="sm" onClick={handleSaveAjustes} disabled={!ajustesDirty || ajustesSaving}>
+                            {ajustesSaving ? 'Guardando...' : 'Guardar ajustes'}
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="mt-3 text-xs text-muted-foreground">
+                        Vista previa: Subtotal ${ajustesPreview.total_base.toFixed(2)}
+                        {ajustesPreview.total_descuentos > 0 && ` - $${ajustesPreview.total_descuentos.toFixed(2)}`}
+                        {ajustesPreview.total_recargos > 0 && ` + $${ajustesPreview.total_recargos.toFixed(2)}`}
+                        {' = '}
+                        <strong>${ajustesPreview.total_final.toFixed(2)}</strong>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <div className="text-right space-y-1">
+                        <div className="text-sm text-muted-foreground">Subtotal</div>
+                        <div className="text-sm font-medium">${persistedTotals.base.toFixed(2)}</div>
+                        {cuponDetalle && (
+                          <div className="text-sm text-amber-700">
+                            - Cupón {cuponDetalle.codigo}{cuponDetalle.pct ? ` (${cuponDetalle.pct})` : ''}: ${cuponDetalle.descuento.toFixed(2)}
+                          </div>
+                        )}
+                        {persistedTotals.descuentos > 0 && (
+                          <div className="text-sm text-red-500">- Descuentos: ${persistedTotals.descuentos.toFixed(2)}</div>
+                        )}
+                        {persistedTotals.recargos > 0 && (
+                          <div className="text-sm text-rose-600">+ Recargos: ${persistedTotals.recargos.toFixed(2)}</div>
+                        )}
+                        <div className="text-lg font-semibold">Total final: ${persistedTotals.final.toFixed(2)}</div>
+                        {tasaActual ? (
+                          <div className="text-sm text-muted-foreground">
+                            Convertido: <strong>{tasaSimbolo} {roundMoney(persistedTotals.final * tasaActual).toFixed(2)}</strong>
+                          </div>
+                        ) : null}
+                        {ajustesDirty && (
+                          <div className="mt-2 text-xs text-amber-600">
+                            Vista previa sin guardar: ${ajustesPreview.total_final.toFixed(2)}
+                            {tasaActual ? ` • ${tasaSimbolo} ${roundMoney(ajustesPreview.total_final * tasaActual).toFixed(2)}` : ''}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                   {/* Vista de pagos en solo lectura (se puede abrir para pedidos completados) */}
                   {selectedPedido && showPaymentsView && (
-                    <div className="mt-4 p-4 bg-white border rounded">
+                    <div id="payments-view-panel" className="mt-4 p-4 bg-white border rounded">
                       <div className="flex items-center justify-between mb-2">
                         <div className="font-medium">Pagos ({((selectedPedido.pagos || selectedPedido.pagos_venta || selectedPedido.payments) || []).length})</div>
                         <button className="text-sm text-sky-600 hover:underline" onClick={() => setShowPaymentsView(false)}>Cerrar</button>
@@ -1895,33 +2558,57 @@ export default function Pedidos() {
 
             {/* Modal para agregar producto al pedido */}
             <Dialog open={addModalOpen} onOpenChange={setAddModalOpen}>
-              <DialogContent className="max-w-md bg-gradient-to-br from-white to-rose-50 rounded-lg shadow-lg border border-rose-100">
+              <DialogContent className="max-w-md bg-gradient-to-br from-white to-rose-50 rounded-lg shadow-lg border border-rose-100 overflow-visible">
                 <DialogHeader>
                   <DialogTitle>Agregar producto</DialogTitle>
                   <DialogDescription>Agregar un nuevo producto a este pedido.</DialogDescription>
                 </DialogHeader>
                 <div className="p-2 space-y-3">
-                  <div>
+                  <div className="relative">
                     <label className="text-sm">Producto</label>
-                    <select className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addProductId ?? ''} onChange={async (e) => { const v = e.target.value ? Number(e.target.value) : null; setAddProductId(v); if (v) await loadPresentacionesForProduct(v); else { setPresentacionesOptions([]); setAddPresentacionId(null); setAddPrecio(null); } }}>
-                      <option value="">-- selecciona un producto --</option>
-                      {productosOptions.map((pr: any) => (
-                        <option key={pr.id} value={pr.id}>{pr.nombre ?? pr.name ?? pr.producto_nombre ?? `#${pr.id}`}</option>
-                      ))}
-                    </select>
+                    <input type="text" placeholder="Escribe para buscar producto..." className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={productSearchTerm} onChange={(e) => { setProductSearchTerm(e.target.value); setShowProductDropdown(true); setAddProductId(null); setPresentacionesOptions([]); setAddPresentacionId(null); setAddPrecio(null); }} />
+                    {showProductDropdown && (
+                      <ul className="absolute z-50 left-0 right-0 mt-1 max-h-60 overflow-auto bg-white border rounded shadow">
+                        {productSearchLoading ? (
+                          <li className="p-2 text-sm text-gray-500">Buscando...</li>
+                        ) : (productosOptions && productosOptions.length > 0) ? (
+                          productosOptions.map((pr: any) => (
+                            <li key={pr.id} className="p-2 hover:bg-rose-50 cursor-pointer text-sm" onClick={async () => { setAddProductId(Number(pr.id)); setProductSearchTerm(pr.nombre ?? pr.name ?? pr.producto_nombre ?? `#${pr.id}`); setShowProductDropdown(false); await loadPresentacionesForProduct(Number(pr.id)); }}>
+                              {pr.nombre ?? pr.name ?? pr.producto_nombre ?? `#${pr.id}`}
+                            </li>
+                          ))
+                        ) : (
+                          <li className="p-2 text-sm text-gray-500">No se encontraron productos</li>
+                        )}
+                      </ul>
+                    )}
                   </div>
                   <div>
                     <label className="text-sm">Presentación</label>
-                    <select className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addPresentacionId ?? ''} onChange={(e) => { const v = e.target.value ? Number(e.target.value) : null; setAddPresentacionId(v); const sel = presentacionesOptions.find((p) => Number(p.id) === Number(v)); setAddPrecio(sel ? (sel.precio_venta ?? null) : null); }}>
-                      <option value="">-- selecciona presentación --</option>
-                      {presentacionesOptions.map((pr: any) => (
-                        <option key={pr.id} value={pr.id}>{pr.nombre ?? `#${pr.id}`} {pr.precio_venta ? ` — ${pr.precio_venta}` : ''}</option>
-                      ))}
-                    </select>
+                    {!addProductId ? (
+                      <div className="mt-1 text-sm text-gray-500">Seleccione un producto primero</div>
+                    ) : (
+                      <div className="mt-1 grid gap-2">
+                        {presentacionesOptions.length === 0 ? (
+                          <div className="text-sm text-gray-500">No hay presentaciones disponibles</div>
+                        ) : (
+                          presentacionesOptions.map((pr: any) => (
+                            <label key={pr.id} className="flex items-center gap-2 p-2 border rounded hover:bg-rose-50 cursor-pointer">
+                              <input type="radio" name="presentacion" className="w-4 h-4" checked={Number(addPresentacionId) === Number(pr.id)} onChange={() => { setAddPresentacionId(Number(pr.id)); setAddPrecio(pr.precio_venta ?? null); }} />
+                              <div className="flex-1 text-sm">
+                                <div className="font-medium">{pr.nombre ?? `#${pr.id}`}</div>
+                                {pr.precio_venta ? <div className="text-xs text-gray-500">{pr.precio_venta}</div> : null}
+                              </div>
+                            </label>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-sm">Cantidad</label>
-                    <input type="number" min={0.01} step={0.01} className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addCantidad} onChange={(e) => setAddCantidad(Number(String(e.target.value).replace(',', '.')))} />
+                    <input type="number" min={1} step={1} className="w-full mt-1 border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-200" value={addCantidad} onChange={(e) => { const parsed = parseInt(String(e.target.value), 10); setAddCantidad(Number.isFinite(parsed) && parsed >= 1 ? parsed : 1); }} />
+                    <div className="text-xs text-gray-500 mt-1">Ingrese un número entero (unidades)</div>
                   </div>
                   <div>
                     <label className="text-sm">Precio unitario (desde presentación)</label>
@@ -1937,7 +2624,7 @@ export default function Pedidos() {
                       return;
                     }
                     if (!addProductId) { toast.error('Seleccione un producto'); return; }
-                    if (!addCantidad || Number(addCantidad) <= 0) { toast.error('Ingrese una cantidad válida'); return; }
+                    if (!addCantidad || Number(addCantidad) < 1) { toast.error('Ingrese una cantidad válida (entera mayor o igual a 1)'); return; }
                     // Si se seleccionó presentación, validar pertenece al producto
                     if (addPresentacionId) {
                       const ok = presentacionesOptions.find((p) => Number(p.id) === Number(addPresentacionId));
@@ -2017,11 +2704,49 @@ export default function Pedidos() {
                   embedded={true}
                   pedidoId={selectedPedido?.id ?? 0}
                   onSuccess={async (data: any) => {
+                    const currentId = selectedPedido?.id;
                     // Asegurar que actualizamos pagosMap para que el listado muestre 'Pagado'
                     try { await refreshPagosMap(); } catch (e) { console.debug(e); }
                     toast.success('Pedido completado y pago registrado');
-                    setSelectedPedido((s: any) => s ? { ...s, estado: 'Completado' } : s);
-                    setPedidos((list) => list.map((p) => (p.id === selectedPedido?.id ? { ...p, estado: 'Completado' } : p)));
+                    setSelectedPedido((s: any) => {
+                      if (!s || s.id !== currentId) return s;
+                      const total_base = roundMoney(data?.total_base ?? s.total_base ?? s.total ?? 0);
+                      const total_descuentos = roundMoney(data?.total_descuentos ?? s.total_descuentos ?? 0);
+                      const total_recargos = roundMoney(data?.total_recargos ?? s.total_recargos ?? 0);
+                      const total_final = roundMoney(data?.total_final ?? data?.total ?? s.total_final ?? s.total ?? 0);
+                      return {
+                        ...s,
+                        estado: 'Completado',
+                        ajustes: Array.isArray(data?.ajustes) ? data.ajustes : s.ajustes,
+                        total_base,
+                        total_descuentos,
+                        total_recargos,
+                        total_final,
+                        total: total_final,
+                      };
+                    });
+                    setPedidos((list) =>
+                      list.map((p) => {
+                        if (p.id !== currentId) return p;
+                        const total_base = roundMoney(data?.total_base ?? p.total_base ?? p.total ?? 0);
+                        const total_descuentos = roundMoney(data?.total_descuentos ?? p.total_descuentos ?? 0);
+                        const total_recargos = roundMoney(data?.total_recargos ?? p.total_recargos ?? 0);
+                        const total_final = roundMoney(data?.total_final ?? data?.total ?? p.total_final ?? p.total ?? 0);
+                        return {
+                          ...p,
+                          estado: 'Completado',
+                          ajustes: Array.isArray(data?.ajustes) ? data.ajustes : p.ajustes,
+                          total_base,
+                          total_descuentos,
+                          total_recargos,
+                          total_final,
+                          total: total_final,
+                        };
+                      })
+                    );
+                    if (Array.isArray(data?.ajustes)) {
+                      ensureAjustesFromPedido({ ajustes: data.ajustes });
+                    }
                     setShowPaymentInline(false);
                     setIsDetailOpen(false);
                   }}
@@ -2037,21 +2762,33 @@ export default function Pedidos() {
               <div className="w-full flex flex-col md:flex-row items-center justify-between gap-2">
                 <div className="flex gap-2">
                   <Button size="lg" variant="default" onClick={() => {
-                    // abrir formulario de pago pero bloquear si hay líneas pendientes por producir
-                    /*if (hasPendingProductionLines(selectedPedido)) {
-                      toast.error('Hay líneas pendientes por producir. Cree las órdenes de producción antes de completar el pedido.');
+                    if (ajustesDirty) {
+                      toast.error('Guarda los ajustes antes de registrar el pago');
                       return;
-                    }*/
+                    }
                     setShowPaymentInline(true);
-                  }} disabled={selectedPedido?.estado === 'Cancelado' || isPedidoPaid(selectedPedido) || hasPendingProductionLines(selectedPedido)} className="bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white">
+                  }} disabled={selectedPedido?.estado === 'Cancelado' || isPedidoPaid(selectedPedido) || hasPendingProductionLines(selectedPedido) || ajustesDirty} className="bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 text-white">
                     Registrar pago y completar
                   </Button>
                   {selectedPedido?.estado === 'Completado' && (
-                    <Button size="lg" variant="outline" onClick={() => setShowPaymentsView(true)}>
-                      Ver pagos
+                    <Button size="lg" variant={showPaymentsView ? 'default' : 'outline'} onClick={() => {
+                      if (showPaymentsView) {
+                        setShowPaymentsView(false);
+                      } else {
+                        setShowPaymentsView(true);
+                        setTimeout(() => {
+                          const panel = document.getElementById('payments-view-panel');
+                          const container = document.getElementById('modal-scroll-container');
+                          if (panel && container) {
+                            container.scrollTo({ top: panel.offsetTop - container.offsetTop - 16, behavior: 'smooth' });
+                          }
+                        }, 50);
+                      }
+                    }}>
+                      {showPaymentsView ? 'Ocultar pagos' : 'Ver pagos'}
                     </Button>
                   )}
-                  <Button size="lg" variant="destructive" onClick={completarSinPago} disabled={completing || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado' || hasPendingProductionLines(selectedPedido)}>
+                  <Button size="lg" variant="destructive" onClick={completarSinPago} disabled={completing || selectedPedido?.estado === 'Completado' || selectedPedido?.estado === 'Cancelado' || hasPendingProductionLines(selectedPedido) || ajustesDirty}>
                     {completing ? 'Procesando...' : 'Completar sin registrar pago'}
                   </Button>
                 </div>

@@ -2,19 +2,30 @@ import React, { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Header from '@/components/Header';
 import ProductCard from '@/components/ProductCard';
-import { getCatalogoPaginated, getCachedTasaActiva, createPedidoVentaPublic } from '@/integrations/api';
-import useCart from '@/hooks/use-cart';
+import { getCatalogoPaginated, getCachedTasaActiva, createPedidoVentaPublic, lookupClienteByCedula, validarCuponPublic } from '@/integrations/api';
+import useCart, { CartItem } from '@/hooks/use-cart';
 import { Product } from '@/lib/types';
 import { getImageUrl } from '@/lib/utils';
+import { trackCatalogPageView } from '@/lib/google-ads';
 import { toast } from 'sonner';
-import { Loader2, X, Search, User, Phone, FileText, Trash2, Send } from 'lucide-react';
+import { Loader2, X, Search, User, Phone, FileText, Trash2, Send, MessageCircle, TicketPercent, Check } from 'lucide-react';
 
 import Footer from '@/components/Footer';
 import ProductCarousel from '@/components/SocialMediaCarousel';
 import { useIsMobile } from '@/hooks/use-mobile';
 
+interface CuponPublico {
+  id: number;
+  codigo: string;
+  descuento_porcentaje: number;
+  descripcion?: string | null;
+  es_global?: boolean;
+  colaborador_nombre?: string | null;
+}
+
 export default function Hero() {
   const [fullProducts, setFullProducts] = useState<Product[] | null>(null);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
   const isMobile = useIsMobile();
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
@@ -22,32 +33,88 @@ export default function Hero() {
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState<number | null>(null);
   const { categorySlug } = useParams();
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const selectedCategory = categorySlug || 'all';
   const [search, setSearch] = useState<string>('');
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
   const [nombreCliente, setNombreCliente] = useState('');
   const [telefonoCliente, setTelefonoCliente] = useState('');
+  const [tipoDocumento, setTipoDocumento] = useState('V');
   const [cedulaCliente, setCedulaCliente] = useState('');
+  const [clienteId, setClienteId] = useState<number | null>(null);
+  const [clienteExistente, setClienteExistente] = useState(false);
+  const [documentoConsultado, setDocumentoConsultado] = useState(false);
+  const [buscandoCliente, setBuscandoCliente] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
+  const [cartPulseKey, setCartPulseKey] = useState(0);
+  // Cupón de descuento aplicado en el carrito
+  const [cuponCodigo, setCuponCodigo] = useState<string>('');
+  const [cuponAplicado, setCuponAplicado] = useState<CuponPublico | null>(null);
+  const [cuponCargando, setCuponCargando] = useState(false);
+  const [cuponError, setCuponError] = useState<string>('');
 
   const { items: cartItems, addItem, removeItem, updateQty, clear, count } = useCart();
   const [tasaPublic, setTasaPublic] = useState<any | null>(null);
 
-  // Load public catalog - fetch all products once and handle pagination client-side
-  // Backend returns all products without server-side pagination
+  useEffect(() => {
+    trackCatalogPageView();
+  }, []);
+
+  const buscarClientePorCedula = async (value: string) => {
+    const cedula = value.trim();
+    if (!cedula) {
+      setClienteId(null);
+      setClienteExistente(false);
+      setDocumentoConsultado(false);
+      setNombreCliente('');
+      setTelefonoCliente('');
+      return null;
+    }
+
+    try {
+      setBuscandoCliente(true);
+      setDocumentoConsultado(false);
+      const response = await lookupClienteByCedula(cedula);
+      const cliente = response?.exists ? response.cliente : null;
+
+      if (cliente) {
+        setClienteId(Number(cliente.id));
+        setClienteExistente(true);
+        setDocumentoConsultado(true);
+        setNombreCliente(String(cliente.nombre || ''));
+        setTelefonoCliente(String(cliente.telefono || ''));
+        return cliente;
+      }
+
+      setClienteId(null);
+      setClienteExistente(false);
+      setDocumentoConsultado(true);
+      setNombreCliente('');
+      setTelefonoCliente('');
+      return null;
+    } catch (error) {
+      setClienteId(null);
+      setClienteExistente(false);
+      setDocumentoConsultado(false);
+      toast.error('No se pudo consultar el cliente');
+      return null;
+    } finally {
+      setBuscandoCliente(false);
+    }
+  };
+
+  // The API returns the catalog in random order; client-side pagination keeps that order stable.
   useEffect(() => {
     let mounted = true;
     setLoading(true);
     const load = async () => {
       try {
-        // Fetch all products from backend (ignoring limit/offset since backend doesn't paginate)
         const res = await getCatalogoPaginated({});
         // getCatalogoPaginated normaliza a { items, meta }
         const items = Array.isArray(res) ? res : (res?.items ?? res?.data ?? []);
 
-        let productsList: Product[] = (Array.isArray(items) ? items : []).map((item: any) => ({
+        const productsList: Product[] = (Array.isArray(items) ? items : []).map((item: any) => ({
           id: item.id ?? item.producto_id ?? 0,
           name: item.nombre ?? item.name ?? '',
           image_url: item.image_url ?? item.imagen ?? item.image ?? undefined,
@@ -69,53 +136,13 @@ export default function Hero() {
         } as Product));
 
         if (!mounted) return;
-
-        // Apply search filter
-        const q = search.trim().toLowerCase();
-        const filtered = q
-          ? productsList.filter((p) => {
-            return (
-              (p.name || '').toLowerCase().includes(q) ||
-              (p.brand || '').toLowerCase().includes(q) ||
-              (p.description || '').toLowerCase().includes(q) ||
-              (p.category || '').toLowerCase().includes(q)
-            );
-          })
-          : productsList;
-
-        // Apply category filter if needed
-        const activeSlug = categorySlug || (selectedCategory === 'all' ? null : selectedCategory);
-
-        const categoryFiltered = !activeSlug || activeSlug === 'all'
-          ? filtered
-          : filtered.filter((p) => {
-            // Generate slug for product category to compare
-            const catName = p.category || '';
-            // Try to find raw category object if available to check for explicit slug
-            const catObj = p.categoria_obj;
-            const rawSlug = catObj?.slug;
-
-            const generatedSlug = (catName).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
-
-            // Check matching against raw slug or generated slug
-            return (rawSlug && rawSlug === activeSlug) || generatedSlug === activeSlug;
-          });
-
-        // Store full filtered list
-        setFullProducts(categoryFiltered);
-
-        // Calculate pagination for current page
-        const totalCount = categoryFiltered.length;
-        const start = (page - 1) * perPage;
-        const pageItems = categoryFiltered.slice(start, start + perPage);
-
-        setProducts(pageItems);
-        setTotal(totalCount);
+        setCatalogProducts(productsList);
       } catch (err) {
         console.error('Error cargando catálogo público:', err);
         toast.error('Error al cargar catálogo público');
         if (mounted) {
           setFullProducts([]);
+          setCatalogProducts([]);
           setProducts([]);
           setTotal(0);
         }
@@ -125,8 +152,46 @@ export default function Hero() {
     };
     load();
     return () => { mounted = false; };
-  }, [page, perPage, search, selectedCategory, categorySlug]);
+  }, []);
 
+  useEffect(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? catalogProducts.filter((product) => (
+        (product.name || '').toLowerCase().includes(q) ||
+        (product.brand || '').toLowerCase().includes(q) ||
+        (product.description || '').toLowerCase().includes(q) ||
+        (product.category || '').toLowerCase().includes(q)
+      ))
+      : catalogProducts;
+
+    const categoryFiltered = selectedCategory === 'all'
+      ? filtered
+      : filtered.filter((product) => {
+        const catName = product.category || '';
+        const catSlug = catName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        return catSlug === selectedCategory.toLowerCase();
+      });
+
+    setFullProducts(categoryFiltered);
+    setTotal(categoryFiltered.length);
+  }, [catalogProducts, search, selectedCategory]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [categorySlug]);
+
+  useEffect(() => {
+    if (!fullProducts) return;
+    const totalPages = Math.max(1, Math.ceil(fullProducts.length / perPage));
+    const activePage = Math.min(page, totalPages);
+    if (activePage !== page) setPage(activePage);
+
+    const start = (activePage - 1) * perPage;
+    setProducts(fullProducts.slice(start, start + perPage));
+  }, [fullProducts, page, perPage]);
+
+  // not exposing categories selector on the public Hero
   // Obtener tasa pública cacheada para mostrar precios convertidos en el carrito público
   useEffect(() => {
     let mounted = true;
@@ -146,6 +211,7 @@ export default function Hero() {
 
   function handleAddToCart(product: Product) {
     addItem(product, 1);
+    setCartPulseKey((prev) => prev + 1);
     toast.success(`${product.name} agregado al carrito`);
   }
 
@@ -157,6 +223,68 @@ export default function Hero() {
     setIsCheckoutOpen(true);
   }
 
+  // --- Cupón de descuento -------------------------------------------------
+  const precioUnitario = (it: CartItem) =>
+    Number((it.product as any)?.precio_snapshot ?? (it.product as any)?.price ?? (it.product as any)?.precio_venta ?? 0);
+
+  const subtotalCarrito = cartItems.reduce((s, it) => s + (precioUnitario(it) * Number(it.qty || 0)), 0);
+
+  const descuentoCupon = cuponAplicado
+    ? Math.round(subtotalCarrito * (Number(cuponAplicado.descuento_porcentaje || 0) / 100) * 100) / 100
+    : 0;
+
+  const totalCarrito = Math.max(0, Math.round((subtotalCarrito - descuentoCupon) * 100) / 100);
+
+  const formatMonto = (valor: number) => {
+    const monto = Number(valor) || 0;
+    if (tasaPublic && typeof tasaPublic.monto === 'number' && tasaPublic.monto > 0) {
+      return `${tasaPublic.simbolo || 'USD'} ${Number(monto * Number(tasaPublic.monto)).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    return `$${Number(monto).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  async function aplicarCupon() {
+    const codigo = cuponCodigo.trim();
+    if (!codigo) {
+      setCuponError('Ingresa el código del cupón');
+      return;
+    }
+    if (cuponCargando) return;
+
+    try {
+      setCuponCargando(true);
+      setCuponError('');
+      const resultado = (await validarCuponPublic(codigo)) as CuponPublico & { valid?: boolean; error?: string };
+      if (!resultado?.valid) {
+        setCuponAplicado(null);
+        setCuponError(resultado?.error || 'Cupón inválido');
+        return;
+      }
+      setCuponAplicado(resultado);
+      setCuponCodigo(String(resultado.codigo || codigo).toUpperCase());
+      toast.success(`Cupón ${resultado.codigo} aplicado: -${resultado.descuento_porcentaje}%`);
+    } catch (error: any) {
+      setCuponAplicado(null);
+      const mensaje = error?.message || 'No se pudo validar el cupón';
+      setCuponError(mensaje);
+      toast.error(mensaje);
+    } finally {
+      setCuponCargando(false);
+    }
+  }
+
+  function quitarCupon() {
+    setCuponAplicado(null);
+    setCuponCodigo('');
+    setCuponError('');
+  }
+
+  function vaciarCarrito() {
+    clear();
+    quitarCupon();
+    toast('Carrito vaciado');
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-gray-50 relative overflow-hidden">
       {/* Decorative elements */}
@@ -166,18 +294,22 @@ export default function Hero() {
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-3/4 h-3/4 bg-gradient-radial from-primary-100 to-transparent rounded-full opacity-10"></div>
       </div>
 
-      <Header cartItemsCount={count} onCartClick={() => setIsCartOpen(true)} />
+      <Header cartItemsCount={count} cartPulseKey={cartPulseKey} onCartClick={() => setIsCartOpen(true)} />
 
-      <section className="relative z-10 px-4 sm:px-6 pt-24 sm:pt-24">
+      <section className="relative z-10 px-4 sm:px-6 pt-32 sm:pt-32">
         <div className="max-w-7xl mx-auto pb-12 sm:pb-20 md:pb-28 text-center">
-          <div className="inline-block px-3 sm:px-4 py-1.5 sm:py-2 mb-3 sm:mb-4 bg-primary-50 text-primary-700 text-xs sm:text-sm font-medium rounded-full border border-primary-100">
-            Colección 2026
+          <div className="inline-block px-3 sm:px-4 py-1.5 sm:py-2 mb-3 sm:mb-4 bg-primary-50 text-primary-700 text-xs sm:text-sm font-medium rounded-full border border-primary-100 uppercase tracking-wide">
+            {selectedCategory === 'all'
+              ? 'Colección 2026'
+              : selectedCategory.split('-').join(' ')}
           </div>
           <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-gray-900 font-bell-mt leading-tight mb-4 sm:mb-6">
             Descubre la Esencia de la <span className="text-primary-600">Elegancia</span>
           </h1>
           <p className="text-base sm:text-lg text-gray-600 max-w-2xl mx-auto leading-relaxed px-2 sm:px-0">
-            Sumérgete en nuestra exclusiva colección de fragancias que capturan la esencia del lujo y la sofisticación.
+            {selectedCategory === 'all'
+              ? "Sumérgete en nuestra exclusiva colección de fragancias que capturan la esencia del lujo y la sofisticación."
+              : `Descubre nuestra selección exclusiva de ${selectedCategory.replace(/-/g, ' ')}.`}
           </p>
           <div className="mt-8 sm:mt-10 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
             <a
@@ -196,17 +328,16 @@ export default function Hero() {
         </div>
       </section>
 
-      {/* Featured Products Carousel - Commented out for now */}
-      {/* {!search.trim() && (
+      {!loading && catalogProducts.length > 0 && (
         <div className="relative z-10 py-8 sm:py-12 bg-gradient-to-b from-white/80 to-transparent">
-          {products.length > 0 && <ProductCarousel products={fullProducts || products} isMobile={isMobile} />}
+          <ProductCarousel products={catalogProducts} />
         </div>
-      )} */}
+      )}
 
       <div id="catalog" className="max-w-7xl mx-auto px-4 sm:px-6 py-8 sm:py-12 relative z-10">
         <div className="text-center mb-8 sm:mb-12 px-2">
-          <h2 className="text-2xl sm:text-3xl font-bell-mt font-bold text-gray-800 mb-2 sm:mb-3">
-            {categorySlug ? `Categoría: ${categorySlug.charAt(0).toUpperCase() + categorySlug.slice(1).replace(/-/g, ' ')}` : 'Nuestros Productos'}
+          <h2 className="text-2xl sm:text-3xl font-bell-mt font-bold text-gray-800 mb-2 sm:mb-3 capitalize">
+            {selectedCategory === 'all' ? 'Nuestros Productos' : `Nuestros Productos - ${selectedCategory.split('-').join(' ')}`}
           </h2>
           <div className="w-20 sm:w-24 h-0.5 sm:h-1 bg-gradient-to-r from-primary-500 to-amber-500 mx-auto rounded-full mb-4 sm:mb-6"></div>
           <p className="text-gray-600 text-sm sm:text-base max-w-2xl mx-auto">
@@ -222,7 +353,7 @@ export default function Hero() {
                 value={search}
                 onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 placeholder="Buscar por nombre, marca o descripción..."
-                className="w-full pl-9 sm:pl-12 pr-4 sm:pr-6 py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl bg-white border border-gray-200 text-sm sm:text-base text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:border-transparent transition-all duration-300 shadow-sm hover:shadow-md"
+                className="w-full pl-9 sm:pl-12 pr-4 sm:pr-6 py-2.5 sm:py-3.5 rounded-lg sm:rounded-xl bg-white border border-gray-200 text-base text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:border-transparent transition-all duration-300 shadow-sm hover:shadow-md"
               />
             </div>
           </div>
@@ -270,7 +401,7 @@ export default function Hero() {
             {/* Page numbers */}
             {(() => {
               const totalPages = Math.max(1, Math.ceil((total || 0) / perPage));
-              const maxVisiblePages = 7; // Show 7 page numbers at a time
+              const maxVisiblePages = isMobile ? 3 : 7;
               let startPage = Math.max(1, page - Math.floor(maxVisiblePages / 2));
               let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
 
@@ -360,6 +491,19 @@ export default function Hero() {
           </div>
         </div>
       </div>
+
+      <a
+        href="https://wa.me/584141454086?text=Hola%20Mirra%20Perfumer%C3%ADa%2C%20quiero%20consultar%20sobre%20un%20producto%20del%20cat%C3%A1logo."
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Hablar con Mirra Perfumería por WhatsApp"
+        className="catalog-whatsapp group fixed bottom-5 right-4 sm:bottom-7 sm:right-7 z-40 inline-flex items-center gap-2 rounded-full border border-white/70 bg-gradient-to-r from-primary-500 to-amber-600 px-3 py-3 text-sm font-semibold text-white shadow-[0_10px_28px_rgba(158,108,57,0.28)] transition-all duration-300 hover:-translate-y-1 hover:from-primary-600 hover:to-amber-700 hover:shadow-[0_14px_32px_rgba(158,108,57,0.36)] active:translate-y-0 focus:outline-none focus:ring-4 focus:ring-primary-300/40"
+      >
+        <MessageCircle className="h-5 w-5" strokeWidth={2.2} aria-hidden="true" />
+        <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 transition-all duration-300 group-hover:max-w-40 group-hover:opacity-100 group-focus-visible:max-w-40 group-focus-visible:opacity-100">
+          Habla con nosotros
+        </span>
+      </a>
 
       {isCartOpen && (
         <div className="fixed inset-0 z-50 flex justify-end" aria-labelledby="slide-over-title" role="dialog" aria-modal="true">
@@ -495,8 +639,27 @@ export default function Hero() {
                       <form onSubmit={async (e) => {
                         e.preventDefault();
                         if (cartItems.length === 0) { toast('El carrito está vacío'); return; }
-                        if (!nombreCliente.trim()) { toast.error('Ingrese nombre del cliente'); return; }
-                        if (!telefonoCliente.trim()) { toast.error('Ingrese teléfono del cliente'); return; }
+                        if (!cedulaCliente.trim()) { toast.error('Ingrese el documento de identificación'); return; }
+
+                        const documentoCompleto = `${tipoDocumento}-${cedulaCliente.trim()}`;
+                        const clienteConsultado = await buscarClientePorCedula(documentoCompleto);
+                        const clienteEncontrado = Boolean(clienteConsultado) || clienteExistente;
+                        const clienteIdActual = clienteId ?? (clienteConsultado ? Number(clienteConsultado.id) : null);
+                        const nombreClienteFinal = (clienteConsultado?.nombre ?? nombreCliente ?? '').trim();
+                        const telefonoClienteFinal = (clienteConsultado?.telefono ?? telefonoCliente ?? '').trim();
+
+                        if (clienteEncontrado) {
+                          if (clienteConsultado) {
+                            setClienteId(Number(clienteConsultado.id));
+                            setClienteExistente(true);
+                            setDocumentoConsultado(true);
+                            setNombreCliente(String(clienteConsultado.nombre || ''));
+                            setTelefonoCliente(String(clienteConsultado.telefono || ''));
+                          }
+                        } else {
+                          if (!nombreCliente.trim()) { toast.error('Ingrese nombre del cliente'); return; }
+                          if (!telefonoCliente.trim()) { toast.error('Ingrese teléfono del cliente'); return; }
+                        }
 
                         const lineas = cartItems.map((it) => {
                           const p: any = it.product as any;
@@ -537,15 +700,19 @@ export default function Hero() {
                         });
 
                         const payload = {
-                          nombre_cliente: nombreCliente.trim(),
-                          telefono: telefonoCliente.trim(),
-                          cedula: cedulaCliente.trim() || undefined,
+                          cliente_id: clienteIdActual ?? undefined,
+                          nombre_cliente: nombreClienteFinal,
+                          telefono: telefonoClienteFinal,
+                          cedula: documentoCompleto,
                           lineas,
                           _preserve_productos: true,
                           productos: productosSnapshot,
                         } as any;
                         if (tasaPublic && typeof tasaPublic.monto === 'number' && tasaPublic.monto > 0) {
                           payload.tasa_cambio_monto = tasaPublic.monto;
+                        }
+                        if (cuponAplicado?.codigo) {
+                          payload.cupon_codigo = String(cuponAplicado.codigo).toUpperCase();
                         }
 
                         try {
@@ -555,18 +722,78 @@ export default function Hero() {
                           setTimeout(() => setCheckoutSuccess(false), 2500);
                           toast.success('¡Pedido enviado con éxito!');
                           clear();
+                          quitarCupon();
                           setIsCartOpen(false);
                           setIsCheckoutOpen(false);
-                          setNombreCliente(''); setTelefonoCliente(''); setCedulaCliente('');
+                          setNombreCliente(''); setTelefonoCliente(''); setCedulaCliente(''); setTipoDocumento('V');
+                          setClienteId(null); setClienteExistente(false); setDocumentoConsultado(false);
                         } catch (err: any) {
                           console.error('Error creando pedido:', err);
-                          toast.error(err?.message || 'Error al crear pedido');
+                          const rawError = String(err?.message || 'Error al crear pedido');
+                          let mensajeError = rawError;
+                          let esErrorCupon = false;
+                          try {
+                            const parsed = JSON.parse(rawError);
+                            if (parsed && typeof parsed === 'object') {
+                              if (parsed.cupon_invalido) esErrorCupon = true;
+                              if (parsed.error) mensajeError = String(parsed.error);
+                            }
+                          } catch (e) { /* noop: el backend puede responder con texto plano */ }
+                          if (/cup[oó]n/i.test(rawError)) esErrorCupon = true;
+                          toast.error(mensajeError);
+                          // Si el cupón fue rechazado (vencido o sin usos) se libera para que el cliente pueda quitarlo
+                          if (esErrorCupon) quitarCupon();
                         } finally {
                           setCheckoutLoading(false);
                         }
                       }} className="space-y-4">
                         <div className="space-y-3">
                           <div>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1 ml-1">Documento de identificación</label>
+                            <div className="flex gap-2">
+                              <select
+                                aria-label="Tipo de documento"
+                                value={tipoDocumento}
+                                onChange={(e) => {
+                                  setTipoDocumento(e.target.value);
+                                  setClienteId(null);
+                                  setClienteExistente(false);
+                                  setDocumentoConsultado(false);
+                                  setNombreCliente('');
+                                  setTelefonoCliente('');
+                                }}
+                                className="w-20 px-2 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-copper-500 focus:bg-white transition-all"
+                              >
+                                <option value="V">V</option>
+                                <option value="J">J</option>
+                                <option value="G">G</option>
+                                <option value="E">E</option>
+                              </select>
+                              <div className="relative flex-1">
+                                <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  placeholder="12345678"
+                                  value={cedulaCliente}
+                                  onChange={(e) => {
+                                    setCedulaCliente(e.target.value.replace(/\D/g, ''));
+                                    setClienteId(null);
+                                    setClienteExistente(false);
+                                    setDocumentoConsultado(false);
+                                    setNombreCliente('');
+                                    setTelefonoCliente('');
+                                  }}
+                                  onBlur={() => void buscarClientePorCedula(`${tipoDocumento}-${cedulaCliente}`)}
+                                  className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-copper-500 focus:bg-white transition-all"
+                                />
+                              </div>
+                            </div>
+                            {buscandoCliente && <p className="mt-1 ml-1 text-xs text-gray-500">Consultando cliente...</p>}
+                            {clienteExistente && <p className="mt-1 ml-1 text-xs text-green-600">¡Bienvenido de vuelta! Tu lealtad hace crecer la familia Mirra. Disfruta tu compra de hoy.</p>}
+                          </div>
+
+                          {documentoConsultado && !clienteExistente && <div>
                             <label className="block text-xs font-semibold text-gray-700 mb-1 ml-1">Nombre Completo</label>
                             <div className="relative">
                               <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -578,9 +805,22 @@ export default function Hero() {
                                 className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-copper-500 focus:bg-white transition-all"
                               />
                             </div>
-                          </div>
+                          </div>}
 
-                          <div className="grid grid-cols-2 gap-3">
+                          {clienteExistente && <div>
+                            <label className="block text-xs font-semibold text-gray-700 mb-1 ml-1">Nombre Completo</label>
+                            <div className="relative">
+                              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                              <input
+                                type="text"
+                                value={nombreCliente}
+                                readOnly
+                                className="w-full pl-9 pr-4 py-2 bg-gray-100 border border-gray-200 rounded-lg text-sm text-gray-700"
+                              />
+                            </div>
+                          </div>}
+
+                          {documentoConsultado && !clienteExistente && <div className="grid grid-cols-2 gap-3">
                             <div>
                               <label className="block text-xs font-semibold text-gray-700 mb-1 ml-1">Teléfono</label>
                               <div className="relative">
@@ -594,20 +834,7 @@ export default function Hero() {
                                 />
                               </div>
                             </div>
-                            <div>
-                              <label className="block text-xs font-semibold text-gray-700 mb-1 ml-1">Cédula (Opcional)</label>
-                              <div className="relative">
-                                <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                                <input
-                                  type="text"
-                                  placeholder="V-12345678"
-                                  value={cedulaCliente}
-                                  onChange={(e) => setCedulaCliente(e.target.value)}
-                                  className="w-full pl-9 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-copper-500 focus:bg-white transition-all"
-                                />
-                              </div>
-                            </div>
-                          </div>
+                          </div>}
                         </div>
 
                         <div className="flex gap-3 pt-2">
@@ -639,29 +866,91 @@ export default function Hero() {
             {/* Footer with Total and Actions (Fixed at bottom) */}
             {cartItems.length > 0 && (
               <div className="border-t border-gray-100 bg-white p-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20 sticky bottom-0">
+                {/* Campo de cupón de descuento */}
+                <div className="mb-4">
+                  {cuponAplicado ? (
+                    <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white">
+                          <Check className="w-4 h-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-emerald-800">
+                            Cupón {cuponAplicado.codigo} aplicado
+                          </p>
+                          <p className="text-xs text-emerald-700">
+                            -{cuponAplicado.descuento_porcentaje}% de descuento
+                            {cuponAplicado.colaborador_nombre ? ` · ${cuponAplicado.colaborador_nombre}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={quitarCupon}
+                        className="p-1 rounded-md text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 transition-colors"
+                        title="Quitar cupón"
+                        aria-label="Quitar cupón"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <label htmlFor="cupon-carrito" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+                        <TicketPercent className="w-4 h-4" /> ¿Tienes un cupón de descuento?
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="cupon-carrito"
+                          type="text"
+                          value={cuponCodigo}
+                          onChange={(e) => { setCuponCodigo(e.target.value.toUpperCase()); setCuponError(''); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void aplicarCupon(); } }}
+                          placeholder="Ingresa tu código"
+                          className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm uppercase focus:border-copper-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-copper-500/30 transition-all"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void aplicarCupon()}
+                          disabled={cuponCargando}
+                          className="shrink-0 rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 transition-colors disabled:opacity-60 flex items-center gap-2"
+                        >
+                          {cuponCargando ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                          Aplicar
+                        </button>
+                      </div>
+                      {cuponError && <p className="mt-1.5 text-xs text-red-600">{cuponError}</p>}
+                    </>
+                  )}
+                </div>
+
                 <div className="flex justify-between items-end mb-4">
                   <div>
-                    <p className="text-sm text-gray-500">Total estimado</p>
+                    <p className="text-sm text-gray-500">{cuponAplicado ? 'Total con descuento' : 'Total estimado'}</p>
                     <p className="text-2xl font-bold text-gray-900 leading-none mt-1">
-                      {(() => {
-                        const subtotal = cartItems.reduce((s, it) => {
-                          const base = Number((it.product as any)?.precio_snapshot ?? (it.product as any)?.price ?? (it.product as any)?.precio_venta ?? 0);
-                          return s + (base * it.qty);
-                        }, 0);
-                        if (tasaPublic && typeof tasaPublic.monto === 'number' && tasaPublic.monto > 0) {
-                          return `${tasaPublic.simbolo || 'USD'} ${Number(subtotal * Number(tasaPublic.monto)).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                        }
-                        return `${Number(subtotal).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                      })()}
+                      {formatMonto(totalCarrito)}
                     </p>
                   </div>
                   {!isCheckoutOpen && <p className="text-xs text-green-600 font-medium bg-green-50 px-2 py-1 rounded-md">Envío por coordinar</p>}
                 </div>
 
+                {descuentoCupon > 0 && (
+                  <div className="mb-4 space-y-1 rounded-xl bg-emerald-50/70 px-3 py-2 text-sm">
+                    <div className="flex justify-between text-gray-600">
+                      <span>Subtotal</span>
+                      <span>{formatMonto(subtotalCarrito)}</span>
+                    </div>
+                    <div className="flex justify-between text-emerald-700 font-medium">
+                      <span>Descuento cupón ({cuponAplicado?.descuento_porcentaje}%)</span>
+                      <span>-{formatMonto(descuentoCupon)}</span>
+                    </div>
+                  </div>
+                )}
+
                 {!isCheckoutOpen ? (
                   <div className="flex gap-3">
                     <button
-                      onClick={() => { clear(); toast('Carrito vaciado'); }}
+                      onClick={vaciarCarrito}
                       className="px-4 py-3 border border-gray-200 rounded-xl text-gray-600 hover:bg-gray-50 hover:text-red-500 hover:border-red-200 transition-colors"
                       title="Vaciar carrito"
                     >
@@ -685,4 +974,3 @@ export default function Hero() {
     </div>
   );
 }
-

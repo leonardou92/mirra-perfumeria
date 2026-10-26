@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import { Product } from '@/lib/types';
 
 export interface CartItem {
@@ -18,52 +18,105 @@ function makeKey(product: Product) {
   return `${pid}:${suffix}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Estado compartido del carrito
+//
+// Antes cada `useCart()` creaba su propia lista en memoria. Eso hacía que
+// agregar un producto desde el carrusel de "Productos destacados" (o desde
+// cualquier otra sección) no actualizara el carrito del Hero ni el contador
+// del header, y que una instancia pudiera pisar lo agregado por otra.
+// Ahora hay una única fuente de verdad (este módulo) que todas las
+// instancias comparten; localStorage queda como persistencia y sincroniza
+// otras pestañas.
+// ─────────────────────────────────────────────────────────────────────
+
+const EMPTY_ITEMS: CartItem[] = [];
+
+function readStorage(): CartItem[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+let items: CartItem[] = typeof window === 'undefined' ? [] : readStorage();
+const listeners = new Set<() => void>();
+
+function emit() {
+  listeners.forEach((listener) => listener());
+}
+
+function setItems(next: CartItem[]) {
+  items = next;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  } catch (e) {
+    // noop: si localStorage falla se mantiene solo en memoria
+  }
+  emit();
+}
+
+function updateItems(updater: (prev: CartItem[]) => CartItem[]) {
+  setItems(updater(items));
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getSnapshot() {
+  return items;
+}
+
+function getServerSnapshot() {
+  return EMPTY_ITEMS;
+}
+
+// Sincroniza el carrito entre pestañas abiertas del navegador
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key !== STORAGE_KEY) return;
+    items = readStorage();
+    emit();
+  });
+}
+
 export function useCart() {
-  const [items, setItems] = useState<CartItem[]>([]);
+  const cartItems = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setItems(JSON.parse(raw));
-    } catch (e) {
-      // noop
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    } catch (e) {
-      // noop
-    }
-  }, [items]);
-
-  function addItem(product: Product, qty = 1) {
+  const addItem = useCallback((product: Product, qty = 1) => {
     const key = makeKey(product);
-    setItems((prev) => {
+    updateItems((prev) => {
       const idx = prev.findIndex((p) => p.key === key);
       if (idx === -1) return [...prev, { key, product, qty }];
       const copy = [...prev];
       copy[idx] = { ...copy[idx], qty: copy[idx].qty + qty, product };
       return copy;
     });
-  }
+  }, []);
 
-  function removeItem(keyOrProductId: string) {
-    setItems((prev) => prev.filter((p) => p.key !== String(keyOrProductId)));
-  }
+  const removeItem = useCallback((keyOrProductId: string) => {
+    updateItems((prev) => prev.filter((p) => p.key !== String(keyOrProductId)));
+  }, []);
 
-  function updateQty(keyOrProductId: string, qty: number) {
-    setItems((prev) => prev.map((p) => p.key === String(keyOrProductId) ? { ...p, qty } : p));
-  }
+  const updateQty = useCallback((keyOrProductId: string, qty: number) => {
+    updateItems((prev) => prev.map((p) => p.key === String(keyOrProductId) ? { ...p, qty } : p));
+  }, []);
 
-  function clear() {
-    setItems([]);
-  }
+  const clear = useCallback(() => {
+    updateItems(() => []);
+  }, []);
 
-  const count = items.reduce((s, it) => s + it.qty, 0);
+  const count = cartItems.reduce((s, it) => s + it.qty, 0);
 
-  return { items, addItem, removeItem, updateQty, clear, count };
+  return { items: cartItems, addItem, removeItem, updateQty, clear, count };
 }
 
 export default useCart;

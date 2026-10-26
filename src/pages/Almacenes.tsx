@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { TableSkeleton } from '@/components/admin-skeletons';
 import { Layout } from "@/components/Layout";
 import { getAlmacenes, createAlmacen, updateAlmacen, deleteAlmacen } from "@/integrations/api";
 import { Button } from "@/components/ui/button";
@@ -14,8 +15,8 @@ import {
 } from "@/components/ui/dialog";
 import { Form, FormItem, FormLabel, FormControl } from "@/components/ui/form";
 import { useForm } from "react-hook-form";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Search, Plus, Edit, Trash2, Warehouse } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Search, Plus, Edit, Trash2, Loader2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -139,19 +140,19 @@ export default function Almacenes() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-3xl font-bold tracking-tight">Almacenes</h2>
+            <h2 className="text-2xl font-semibold tracking-tight">Almacenes</h2>
             <p className="text-muted-foreground">Gestión de almacenes</p>
           </div>
 
           <div>
-            <Button className="gap-2" onClick={() => { setEditing(null); form.reset(); setIsOpen(true); }}>
+            <Button className="h-11 px-4 gap-2" onClick={() => { setEditing(null); form.reset(); setIsOpen(true); }}>
               <Plus className="h-4 w-4" />
               Nuevo Almacén
             </Button>
           </div>
 
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
-            <DialogContent>
+            <DialogContent className="w-full h-[100dvh] rounded-none sm:rounded-lg sm:h-auto">
               <DialogHeader>
                 <DialogTitle>{editing ? "Editar Almacén" : "Nuevo Almacén"}</DialogTitle>
                 <DialogDescription>Rellena los datos del almacén</DialogDescription>
@@ -162,7 +163,7 @@ export default function Almacenes() {
                   <FormItem>
                     <FormLabel>Nombre</FormLabel>
                     <FormControl>
-                      <Input {...form.register("nombre", { required: true })} />
+                      <Input className="h-11 text-base" {...form.register("nombre", { required: true })} />
                     </FormControl>
                   </FormItem>
 
@@ -170,7 +171,7 @@ export default function Almacenes() {
                     <FormLabel>Tipo</FormLabel>
                     <FormControl>
                       <select
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base md:text-sm"
+                        className="flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-base"
                         {...form.register("tipo", { required: true })}
                       >
                         <option value="interno">Interno</option>
@@ -192,20 +193,20 @@ export default function Almacenes() {
                   <FormItem>
                     <FormLabel>Ubicación</FormLabel>
                     <FormControl>
-                      <Input {...form.register("ubicacion")} />
+                      <Input className="h-11 text-base" {...form.register("ubicacion")} />
                     </FormControl>
                   </FormItem>
 
                   <FormItem>
                     <FormLabel>Responsable</FormLabel>
                     <FormControl>
-                      <Input {...form.register("responsable")} />
+                      <Input className="h-11 text-base" {...form.register("responsable")} />
                     </FormControl>
                   </FormItem>
 
                   <DialogFooter>
-                    <Button variant="outline" type="button" onClick={() => { setIsOpen(false); setEditing(null); form.reset(); }}>Cancelar</Button>
-                    <Button type="submit">{editing ? "Actualizar" : "Crear"}</Button>
+                    <Button className="h-11" variant="outline" type="button" onClick={() => { setIsOpen(false); setEditing(null); form.reset(); }}>Cancelar</Button>
+                    <Button className="h-11" type="submit">{editing ? "Actualizar" : "Crear"}</Button>
                   </DialogFooter>
                 </form>
               </Form>
@@ -214,59 +215,82 @@ export default function Almacenes() {
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Warehouse className="h-5 w-5" />
-              Listado de Almacenes
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="pt-2 pb-4 flex gap-4">
+          <CardContent className="p-0">
+            <div className="px-4 pt-4 pb-3 flex gap-4">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input placeholder="Buscar por nombre, ubicación o responsable..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10" />
               </div>
-              <Button variant="outline">Filtros</Button>
             </div>
 
             {loading ? (
-              <div>Cargando...</div>
+              <TableSkeleton columns={5} />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Nombre</TableHead>
-                    <TableHead>Ubicación</TableHead>
-                    <TableHead>Responsable</TableHead>
-                    <TableHead className="text-right">Acciones</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <>
+                {/* Mobile card list */}
+                <div className="sm:hidden divide-y divide-border">
                   {filtered.map((p: any) => (
-                    <TableRow key={p.id} className="hover:bg-muted/50 transition-smooth">
-                      <TableCell className="font-mono text-sm">{p.id}</TableCell>
-                      <TableCell className="font-medium">{p.nombre}</TableCell>
-                      <TableCell>{p.ubicacion ?? "-"}</TableCell>
-                      <TableCell>{p.responsable ?? "-"}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="icon" onClick={() => {
-                            setEditing(p);
-                            form.reset({ nombre: p.nombre, tipo: p.tipo ?? 'venta', es_materia_prima: p.es_materia_prima ?? (String(p.tipo).toLowerCase() === 'interno'), ubicacion: p.ubicacion, responsable: p.responsable });
-                            setIsOpen(true);
-                          }}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" onClick={() => { setDeleteTarget(p); setAlertOpen(true); }}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
+                    <div key={p.id} className="px-4 py-3 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium">{p.nombre}</span>
+                        <span className="text-xs tabular-nums text-muted-foreground">#{p.id}</span>
+                      </div>
+                      {p.ubicacion && <div className="text-sm text-muted-foreground">{p.ubicacion}</div>}
+                      {p.responsable && <div className="text-sm text-muted-foreground">{p.responsable}</div>}
+                      <div className="flex gap-2 pt-1">
+                        <Button className="flex-1 min-h-[44px]" variant="outline" size="sm" onClick={() => {
+                          setEditing(p);
+                          form.reset({ nombre: p.nombre, tipo: p.tipo ?? 'venta', es_materia_prima: p.es_materia_prima ?? (String(p.tipo).toLowerCase() === 'interno'), ubicacion: p.ubicacion, responsable: p.responsable });
+                          setIsOpen(true);
+                        }}>
+                          <Edit className="h-4 w-4 mr-1" />Editar
+                        </Button>
+                        <Button className="flex-1 min-h-[44px]" variant="outline" size="sm" onClick={() => { setDeleteTarget(p); setAlertOpen(true); }}>
+                          <Trash2 className="h-4 w-4 mr-1 text-destructive" />Eliminar
+                        </Button>
+                      </div>
+                    </div>
                   ))}
-                </TableBody>
-              </Table>
+                </div>
+                {/* Desktop table */}
+                <div className="hidden sm:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">ID</TableHead>
+                        <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Nombre</TableHead>
+                        <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Ubicación</TableHead>
+                        <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3">Responsable</TableHead>
+                        <TableHead className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground py-3 text-right">Acciones</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((p: any) => (
+                        <TableRow key={p.id} className="hover:bg-muted/40 transition-colors duration-150">
+                          <TableCell className="text-xs tabular-nums text-muted-foreground">#{p.id}</TableCell>
+                          <TableCell className="font-medium">{p.nombre}</TableCell>
+                          <TableCell>{p.ubicacion ?? "-"}</TableCell>
+                          <TableCell>{p.responsable ?? "-"}</TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button variant="ghost" size="icon" onClick={() => {
+                                setEditing(p);
+                                form.reset({ nombre: p.nombre, tipo: p.tipo ?? 'venta', es_materia_prima: p.es_materia_prima ?? (String(p.tipo).toLowerCase() === 'interno'), ubicacion: p.ubicacion, responsable: p.responsable });
+                                setIsOpen(true);
+                              }}>
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button variant="ghost" size="icon" onClick={() => { setDeleteTarget(p); setAlertOpen(true); }}>
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

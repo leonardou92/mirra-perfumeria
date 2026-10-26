@@ -6,12 +6,19 @@ import { uploadImage as uploadImageToAPI } from '@/integrations/api';
 
 interface ImageUploadProps {
   onImageUpload: (url: string) => void;
+  onKeyUpload?: (key: string) => void;
   existingImageUrl?: string;
   originalImageUrl?: string;
 }
 
-export default function ImageUpload({ onImageUpload, existingImageUrl, originalImageUrl }: ImageUploadProps) {
-  const [previewUrl, setPreviewUrl] = useState<string>((existingImageUrl || '').replace('https://', 'http://'));
+export default function ImageUpload({ onImageUpload, onKeyUpload, existingImageUrl, originalImageUrl }: ImageUploadProps) {
+  const normalizePreviewUrl = (url: string) => {
+    if (!url) return '';
+    if (/^data:|^blob:/i.test(url)) return url;
+    return url.replace('https://', 'http://');
+  };
+
+  const [previewUrl, setPreviewUrl] = useState<string>(normalizePreviewUrl(existingImageUrl || ''));
   const [error, setError] = useState<string>('');
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -23,7 +30,7 @@ export default function ImageUpload({ onImageUpload, existingImageUrl, originalI
 
   // Sync when parent tells us there's an existing image (e.g., opening the edit modal)
   useEffect(() => {
-    setPreviewUrl((existingImageUrl || '').replace('https://', 'http://'));
+    setPreviewUrl(normalizePreviewUrl(existingImageUrl || ''));
   }, [existingImageUrl]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -69,14 +76,15 @@ export default function ImageUpload({ onImageUpload, existingImageUrl, originalI
       }, 100);
 
       const response = await uploadImageToAPI(file);
-      
+
       clearInterval(progressInterval);
       setUploadProgress(100);
-      
+
       if (response.ok && response.url) {
-        const httpUrl = response.url.replace('https://', 'http://');
+        const httpUrl = normalizePreviewUrl(response.url);
         setPreviewUrl(httpUrl);
         onImageUpload(httpUrl);
+        if (response.key) onKeyUpload?.(response.key);
         setUploadSuccess(true);
         toast.success('Imagen subida correctamente');
       } else {
@@ -115,9 +123,8 @@ export default function ImageUpload({ onImageUpload, existingImageUrl, originalI
           onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
           onDragLeave={(e) => { e.preventDefault(); setIsDragOver(false); }}
           onDrop={onDropHandler}
-          className={`relative flex items-center justify-center w-full h-48 border-2 rounded-lg cursor-pointer overflow-hidden transition-shadow ${
-            isUploading ? 'bg-gray-50 shadow-inner' : 'bg-white hover:shadow-lg border-gray-200'
-          } ${isDragOver ? 'ring-4 ring-primary/40' : ''}`}
+          className={`relative flex items-center justify-center w-full h-48 border-2 rounded-lg cursor-pointer overflow-hidden transition-shadow ${isUploading ? 'bg-gray-50 shadow-inner' : 'bg-white hover:shadow-lg border-gray-200'
+            } ${isDragOver ? 'ring-4 ring-primary/40' : ''}`}
         >
           <input
             ref={fileInputRef}
@@ -134,8 +141,7 @@ export default function ImageUpload({ onImageUpload, existingImageUrl, originalI
           {previewUrl ? (
             <div className="relative w-full h-full">
               <img
-                src={previewUrl.replace('https://', 'http://')}
-                alt="Vista previa"
+                src={previewUrl}
                 className="w-full h-full object-contain bg-gray-100"
               />
 

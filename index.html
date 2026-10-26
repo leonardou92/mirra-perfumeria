@@ -1,48 +1,80 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mirra  Perfumería</title>
-    <meta name="description" content="Sistema completo de gestión para perfumerías con control de inventario, ventas, pedidos y más" />
-    <meta name="author" content="Perfumería" />
+<html lang="es">
 
-    <meta property="og:title" content="Mirra Perfumería" />
-    <meta property="og:description" content="Sistema completo de gestión para perfumerías con control de inventario, ventas, pedidos y más" />
-    <meta property="og:type" content="website" />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>Mirra Perfumería</title>
+  <meta name="description" content="Fragancias que inspiran. Explora nuestra colección oficial." />
+  <meta name="author" content="Mirra Perfumería" />
+  <meta name="robots" content="index, follow" />
+  <meta name="theme-color" content="#ca9e67" />
+  <meta name="application-name" content="Mirra Perfumería" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Mirra Perfumería" />
+  <meta property="og:title" content="Mirra Perfumería" />
+  <meta property="og:description" content="Fragancias que inspiran. Explora nuestra colección oficial." />
+  <meta property="og:image" content="/logoColor.png" />
+  <meta property="og:image:secure_url" content="/logoColor.png" />
+  <meta property="og:image:alt" content="Logo de Mirra Perfumería" />
+  <meta property="og:image:width" content="512" />
+  <meta property="og:image:height" content="512" />
+  <meta property="og:url" content="/" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Mirra Perfumería" />
+  <meta name="twitter:description" content="Fragancias que inspiran. Explora nuestra colección oficial." />
+  <meta name="twitter:image" content="/logoColor.png" />
+
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Mirra Perfumería",
+      "url": "/",
+      "logo": "/logoColor.png",
+      "description": "Mirra Perfumería ofrece fragancias selectas con esencia, elegancia y estilo para cada momento.",
+      "sameAs": []
+    }
+  </script>
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Playfair+Display:wght@400;700;900&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Playfair+Display:wght@400;700;900&display=swap"
+    rel="stylesheet">
   <!-- Font Awesome (Free) -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-    <link rel="icon" type="image/png" href="/logo.png" />
-    <link rel="apple-touch-icon" href="/logo.png" />
-    <link rel="shortcut icon" href="/logo.png" />
-  </head>
+  <link rel="icon" type="image/png" href="/logo.png" />
+  <link rel="apple-touch-icon" href="/logo.png" />
+  <link rel="shortcut icon" href="/logo.png" />
+</head>
 
-  <body>
-    <div id="root"></div>
-    <!-- Inline fallback to ensure _jsxDEV exists before any bundle code runs -->
-    <script>
-      (function () {
-        try {
-          if (typeof window !== 'undefined' && typeof window._jsxDEV !== 'function') {
-            window._jsxDEV = function (type, props) {
-              // minimal fallback: delegate to React.createElement if available later
-              if (typeof window.React !== 'undefined' && typeof window.React.createElement === 'function') {
-                return window.React.createElement(type, props);
-              }
-              // store a minimal placeholder object so calls don't throw
-              return { __jsx_fallback: true, type: type, props: props };
-            };
-          }
-        } catch (e) {
-          console.warn('Failed to install _jsxDEV fallback', e);
+<body>
+  <div id="root"></div>
+  <!-- Inline fallback to ensure _jsxDEV exists before any bundle code runs -->
+  <script>
+    (function () {
+      try {
+        if (typeof window !== 'undefined' && typeof window._jsxDEV !== 'function') {
+          window._jsxDEV = function (type, props) {
+            // minimal fallback: delegate to React.createElement if available later
+            if (typeof window.React !== 'undefined' && typeof window.React.createElement === 'function') {
+              return window.React.createElement(type, props);
+            }
+            // store a minimal placeholder object so calls don't throw
+            return { __jsx_fallback: true, type: type, props: props };
+          };
         }
-      })();
-    </script>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+      } catch (e) {
+        console.warn('Failed to install _jsxDEV fallback', e);
+      }
+    })();
+  </script>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
 </html>

@@ -1,3 +1,8 @@
+// --- Dashboard ---
+export async function getDashboardStats() {
+  return apiFetch("/dashboard/stats");
+}
+
 // --- Servicios para entidades ---
 
 // Productos
@@ -110,9 +115,26 @@ export async function getPedidos() {
   return apiFetch(`/pedidos-venta`);
 }
 
-export async function getPedidosPaginated(page = 1, limit = 12, estado?: string) {
+export async function getPedidosResumenReportes(fechaInicio?: string, fechaFin?: string) {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.set('fecha_inicio', fechaInicio);
+  if (fechaFin) params.set('fecha_fin', fechaFin);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return apiFetch(`/pedidos-venta/reportes-resumen${qs}`);
+}
+
+export async function getVentasPorPresentacion(fechaInicio?: string, fechaFin?: string) {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.set('fecha_inicio', fechaInicio);
+  if (fechaFin) params.set('fecha_fin', fechaFin);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return apiFetch(`/pedidos-venta/reportes-presentaciones${qs}`);
+}
+
+export async function getPedidosPaginated(page = 1, limit = 12, estado?: string, conCupon?: boolean) {
   let url = `/pedidos-venta/paginated?page=${page}&limit=${limit}`;
   if (estado) url += `&estado=${encodeURIComponent(estado)}`;
+  if (conCupon) url += `&con_cupon=true`;
   return apiFetch(url);
 }
 
@@ -126,9 +148,28 @@ export async function searchPedidos(term: string) {
 export async function getPedidosStats() {
   return apiFetch('/pedidos-venta/stats');
 }
+
+// Resumen de descuentos aplicados por cupón (pedidos y monto descontado)
+export async function getPedidosCuponesResumen() {
+  return apiFetch('/pedidos-venta/cupones-resumen');
+}
 export async function getPedidoVenta(id: number) {
   return apiFetch(`/pedidos-venta/${id}`);
 }
+
+export async function lookupClienteByCedula(cedula: string) {
+  const cleanCedula = String(cedula || '').trim();
+  if (!cleanCedula) throw new Error('cedula requerida');
+  return apiFetch(`/clientes/lookup?cedula=${encodeURIComponent(cleanCedula)}`);
+}
+
+export async function lookupOrCreateCliente(data: any) {
+  return apiFetch('/clientes/lookup-or-create', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
 export async function createProducto(data: any) {
   return apiFetch("/productos", { method: "POST", body: JSON.stringify(data) });
 }
@@ -258,6 +299,31 @@ export async function createFormula(data: { producto_terminado_id: number; compo
   return apiFetch(`/formulas`, { method: 'POST', body: JSON.stringify(data) });
 }
 
+// Buscar fórmulas por coincidencia parcial de nombre (GET /api/formulas/by-like?q=...)
+export async function searchFormulasByLike(q: string) {
+  if (!q || String(q).trim() === '') throw new Error('q requerido');
+  return apiFetch(`/formulas/by-like?q=${encodeURIComponent(String(q).trim())}`);
+}
+
+// Actualizar precio_venta en masa para fórmulas que coincidan (PATCH /api/formulas/by-like)
+export async function updateFormulasByLike(q: string, precio_venta: number) {
+  if (!q || String(q).trim() === '') throw new Error('q requerido');
+  if (precio_venta == null || isNaN(Number(precio_venta))) throw new Error('precio_venta requerido y debe ser numérico');
+  return apiFetch(`/formulas/by-like`, {
+    method: 'PATCH',
+    body: JSON.stringify({ q: String(q).trim(), precio_venta: Number(precio_venta) }),
+  });
+}
+
+// Activar o inactivar fórmulas en masa por coincidencia parcial de nombre (PATCH /api/formulas/by-like/set-active)
+export async function setActiveFormulasByLike(q: string, activo: boolean) {
+  if (!q || String(q).trim() === '') throw new Error('q requerido');
+  return apiFetch(`/formulas/by-like/set-active`, {
+    method: 'PATCH',
+    body: JSON.stringify({ q: String(q).trim(), activo }),
+  });
+}
+
 // Tamaños (formats / tamaños de venta)
 // Nota: el endpoint `/api/tamanos` fue removido en el backend y los "tamaños"
 // ahora se modelan como `formulas`. Para mantener compatibilidad con las
@@ -342,6 +408,48 @@ export async function createProduccion(formulaId: number, data: { cantidad: numb
 // Obtener una orden de producción por id (entidad simple)
 export async function getOrdenProduccion(id: number) {
   return apiFetch(`/ordenes-produccion/${id}`);
+}
+
+// Resumen de producciones por producto: cuántas veces se agregó esencia a cada producto terminado.
+// Responde: [{ producto_terminado_id, producto_nombre, veces_producido, cantidad_total_producida, ultima_produccion }]
+export async function getOrdenesProduccionResumen(desde?: string, hasta?: string) {
+  const ps = new URLSearchParams();
+  if (desde) ps.set('desde', desde);
+  if (hasta) ps.set('hasta', hasta);
+  const qs = ps.toString() ? `?${ps.toString()}` : '';
+  return apiFetch(`/ordenes-produccion/resumen-por-producto${qs}`);
+}
+
+// Resumen de producciones por materia prima (esencia): cuántos gramos se usaron.
+// Responde: [{ materia_prima_id, materia_nombre, veces_producido, cantidad_total_gramos, ultima_produccion }]
+export async function getOrdenesProduccionResumenPorMateria(desde?: string, hasta?: string) {
+  const ps = new URLSearchParams();
+  if (desde) ps.set('desde', desde);
+  if (hasta) ps.set('hasta', hasta);
+  const qs = ps.toString() ? `?${ps.toString()}` : '';
+  return apiFetch(`/ordenes-produccion/resumen-por-materia${qs}`);
+}
+
+// Entradas de inventario de esencias (historial de producción real)
+export async function getEntradasEsencias(opts: { desde?: string; hasta?: string; producto_id?: number; limit?: number } = {}) {
+  const ps = new URLSearchParams();
+  if (opts.desde) ps.set('desde', opts.desde);
+  if (opts.hasta) ps.set('hasta', opts.hasta);
+  if (opts.producto_id != null) ps.set('producto_id', String(opts.producto_id));
+  if (opts.limit) ps.set('limit', String(opts.limit));
+  const qs = ps.toString() ? `?${ps.toString()}` : '';
+  return apiFetch(`/inventario/entradas-esencias${qs}`);
+}
+
+// Historial de movimientos de inventario (kardex).
+// Filtros: producto_id, tipo ('entrada'|'salida'), limit (default 200).
+export async function getInventarioMovimientos(opts: { producto_id?: number; tipo?: 'entrada' | 'salida'; limit?: number } = {}) {
+  const ps = new URLSearchParams();
+  if (opts.producto_id != null) ps.set('producto_id', String(opts.producto_id));
+  if (opts.tipo) ps.set('tipo', opts.tipo);
+  if (opts.limit) ps.set('limit', String(opts.limit));
+  const qs = ps.toString() ? `?${ps.toString()}` : '';
+  return apiFetch(`/inventario/movimientos${qs}`);
 }
 
 // Obtener detalle extendido de una orden de producción (incluye componentes).
@@ -541,6 +649,106 @@ export async function createClienteBanco(data: any) {
 export async function getPagos() {
   return apiFetch("/pagos");
 }
+
+export async function getVentasPorMetodoMoneda(fechaInicio?: string, fechaFin?: string) {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.set('fecha_inicio', fechaInicio);
+  if (fechaFin) params.set('fecha_fin', fechaFin);
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  return apiFetch(`/pagos/resumen-metodo-moneda${qs}`);
+}
+
+export async function getClientesTopResumen(limit = 10, pedidosLimit = 5, fechaInicio?: string, fechaFin?: string) {
+  const params = new URLSearchParams({ limit: String(limit), pedidos_limit: String(pedidosLimit) });
+  if (fechaInicio) params.set('fecha_inicio', fechaInicio);
+  if (fechaFin) params.set('fecha_fin', fechaFin);
+  return apiFetch(`/pedidos-venta/clientes-top-resumen?${params.toString()}`);
+}
+
+// Cupones y colaboradores
+export async function getCupones() {
+  return apiFetch('/cupones');
+}
+
+export async function createCupon(data: any) {
+  return apiFetch('/cupones', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateCupon(id: number, data: any) {
+  return apiFetch(`/cupones/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function setCuponActivo(id: number, activo: boolean) {
+  return apiFetch(`/cupones/${id}/estado`, { method: 'PATCH', body: JSON.stringify({ activo }) });
+}
+
+export async function getUsosCupon(id: number) {
+  return apiFetch(`/cupones/${id}/usos`);
+}
+
+export async function getColaboradores() {
+  return apiFetch('/cupones/colaboradores');
+}
+
+export async function getUsuariosInfluencer() {
+  return apiFetch('/cupones/usuarios-influencer');
+}
+
+export async function getInfluencerDashboard(fechaInicio?: string, fechaFin?: string) {
+  const params = new URLSearchParams();
+  if (fechaInicio) params.set('fecha_inicio', fechaInicio);
+  if (fechaFin) params.set('fecha_fin', fechaFin);
+  const query = params.toString();
+  return apiFetch(`/cupones/influencer/dashboard${query ? `?${query}` : ''}`);
+}
+
+export async function createColaborador(data: any) {
+  return apiFetch('/cupones/colaboradores', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateColaborador(id: number, data: any) {
+  return apiFetch(`/cupones/colaboradores/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function setColaboradorActivo(id: number, activo: boolean) {
+  return apiFetch(`/cupones/colaboradores/${id}/estado`, { method: 'PATCH', body: JSON.stringify({ activo }) });
+}
+
+export async function getInfluencerCommissionPayments(colaboradorId: number, fechaCorte?: string) {
+  const query = fechaCorte ? `?fecha_corte=${encodeURIComponent(fechaCorte)}` : '';
+  return apiFetch(`/cupones/colaboradores/${colaboradorId}/comisiones-pagos${query}`);
+}
+
+export async function createInfluencerCommissionPayment(colaboradorId: number, data: { fecha_corte: string; referencia: string; comprobante_key: string; observaciones?: string }) {
+  return apiFetch(`/cupones/colaboradores/${colaboradorId}/comisiones-pagos`, { method: 'POST', body: JSON.stringify(data) });
+}
+
+// Validación pública de cupón (carrito del sitio público, sin autenticación)
+export async function validarCuponPublic(codigo: string) {
+  const clean = String(codigo || '').trim();
+  if (!clean) throw new Error('Ingresa el código del cupón');
+
+  const res = await fetch(`${API_URL}/cupones/validar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codigo: clean }),
+  });
+
+  let body: any = {};
+  try {
+    body = await res.json();
+  } catch (e) {
+    body = {};
+  }
+
+  if (!res.ok) {
+    const err = new Error(body?.error || 'Cupón inválido');
+    (err as any).status = res.status;
+    throw err;
+  }
+  return body;
+}
+
 // Obtener pagos por pedido: GET /api/pedidos-venta/:id/pagos
 export async function getPagosByPedido(id: number) {
   try {
@@ -742,31 +950,79 @@ export async function deleteTasaCambio(id: number) {
 }
 
 // Completar (despachar) un pedido de venta: POST /api/pedidos-venta/:id/completar
-// Ahora acepta opcionalmente un objeto { pago: { ... } } en el body para registrar el pago
-export async function completarPedidoVenta(id: number, pago?: any) {
-  const body = pago ? { pago } : undefined;
+// Acepta opcionalmente { pago, ajustes } en el body para registrar pago y/o ajustes en el mismo paso
+export async function completarPedidoVenta(
+  id: number,
+  payload?: { pago?: any; ajustes?: any } | any
+) {
+  let body: any = undefined;
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const hasPago = Object.prototype.hasOwnProperty.call(payload, 'pago');
+    const hasAjustes = Object.prototype.hasOwnProperty.call(payload, 'ajustes');
+    if (hasPago || hasAjustes) {
+      const data: any = {};
+      if (hasPago) data.pago = payload.pago;
+      if (hasAjustes) data.ajustes = payload.ajustes;
+      if (Object.keys(data).length > 0) body = data;
+    } else if (payload) {
+      body = { pago: payload };
+    }
+  } else if (payload) {
+    body = { pago: payload };
+  }
+
   try {
-    // Log exact payload that will be sent to the backend for diagnosis
-    // Esto facilita verificar en la consola del navegador si la tasa/símbolo vienen desde el frontend
-    // eslint-disable-next-line no-console
     console.debug('api.completarPedidoVenta.request', { id, body });
   } catch (e) {
     // noop
   }
-  return apiFetch(`/pedidos-venta/${id}/completar`, { method: 'POST', body: body ? JSON.stringify(body) : undefined });
+
+  return apiFetch(`/pedidos-venta/${id}/completar`, {
+    method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
+  });
 }
 
 // Finalizar pedido (alias explícito): POST /api/pedidos-venta/:id/finalizar
 // Funcionalmente equivalente a /completar y acepta el mismo body opcional { pago: {...} }
-export async function finalizarPedidoVenta(id: number, pago?: any) {
-  const body = pago ? { pago } : undefined;
-  return apiFetch(`/pedidos-venta/${id}/finalizar`, { method: 'POST', body: body ? JSON.stringify(body) : undefined });
+export async function finalizarPedidoVenta(
+  id: number,
+  payload?: { pago?: any; ajustes?: any } | any
+) {
+  let body: any = undefined;
+  if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+    const hasPago = Object.prototype.hasOwnProperty.call(payload, 'pago');
+    const hasAjustes = Object.prototype.hasOwnProperty.call(payload, 'ajustes');
+    if (hasPago || hasAjustes) {
+      const data: any = {};
+      if (hasPago) data.pago = payload.pago;
+      if (hasAjustes) data.ajustes = payload.ajustes;
+      if (Object.keys(data).length > 0) body = data;
+    } else if (payload) {
+      body = { pago: payload };
+    }
+  } else if (payload) {
+    body = { pago: payload };
+  }
+
+  return apiFetch(`/pedidos-venta/${id}/finalizar`, {
+    method: 'POST',
+    body: body ? JSON.stringify(body) : undefined,
+  });
 }
 
 // Cambiar estado de pedido: PUT /api/pedidos-venta/:id/status
 // Permite enviar { estado: "Completado", pago: { ... } } para completar y registrar pago
 export async function updatePedidoStatus(id: number, data: { estado: string; pago?: any }) {
   return apiFetch(`/pedidos-venta/${id}/status`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function updatePedidoAjustes(id: number, ajustes: any[]) {
+  const payload = { ajustes: Array.isArray(ajustes) ? ajustes : [] };
+  return apiFetch(`/pedidos-venta/${id}/ajustes`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
 }
 
 /**
@@ -788,7 +1044,21 @@ export async function updatePedidoStatus(id: number, data: { estado: string; pag
 export async function completarPedidoAtomico(
   id: number,
   almacen_venta_id: number,
-  pago: {
+  pagoOrOptions?: {
+    pago?: {
+      forma_pago_id: number;
+      banco_id: number;
+      monto: number;
+      referencia?: string;
+      fecha_transaccion?: string;
+      tasa?: number;
+      tasa_simbolo?: string;
+      tasa_monto?: number;
+      moneda?: string;
+      equivalencia?: number;
+    };
+    ajustes?: any;
+  } | {
     forma_pago_id: number;
     banco_id: number;
     monto: number;
@@ -806,13 +1076,34 @@ export async function completarPedidoAtomico(
   try {
     console.log('🚀 [ATOMICO] Iniciando completar pedido atomico:', id);
 
-    const payload = {
+    let pago: any = null;
+    let ajustes: any = undefined;
+    if (pagoOrOptions && typeof pagoOrOptions === 'object' && !Array.isArray(pagoOrOptions)) {
+      const hasPago = Object.prototype.hasOwnProperty.call(pagoOrOptions, 'pago');
+      const hasAjustes = Object.prototype.hasOwnProperty.call(pagoOrOptions, 'ajustes');
+      if (hasPago || hasAjustes) {
+        if (hasPago) pago = pagoOrOptions.pago;
+        if (hasAjustes) ajustes = pagoOrOptions.ajustes;
+      } else {
+        pago = pagoOrOptions;
+      }
+    } else if (pagoOrOptions) {
+      pago = pagoOrOptions;
+    }
+
+    const payload: any = {
       almacen_venta_id,
-      pago: {
+    };
+
+    if (pago) {
+      payload.pago = {
         ...pago,
         fecha_transaccion: pago.fecha_transaccion || new Date().toISOString(),
-      }
-    };
+      };
+    }
+    if (ajustes !== undefined) {
+      payload.ajustes = ajustes;
+    }
 
     const result = await apiFetch(`/pedidos-venta/${id}/completar-todo-atomico`, {
       method: 'POST',
@@ -837,6 +1128,15 @@ export async function cancelarPedidoVenta(id: number) {
 
 // Envío público de pedido (sin Authorization). Útil para checkout público que no requiere token.
 export async function createPedidoVentaPublic(data: any) {
+  const normalizePhoneForWhatsapp = (value: string) => {
+    const digits = String(value || '').replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.startsWith('58')) return digits;
+    if (digits.length === 11 && digits.startsWith('0')) return `58${digits.slice(1)}`;
+    if (digits.length === 10) return `58${digits}`;
+    return digits;
+  };
+
   const url = `${API_URL}/pedidos-venta`;
   // Asegurar que la tasa se envía; por defecto 1
   const payload = { ...data };
@@ -934,8 +1234,11 @@ export async function createPedidoVentaPublic(data: any) {
   // Construir payload final: por defecto minimalista, pero si el caller incluye `_preserve_productos: true`
   // se enviarán `productos` (snapshots) y `total` calculado cuando sea posible.
   const finalPayload: any = {};
+  if (payload.cliente_id !== undefined && payload.cliente_id !== null && payload.cliente_id !== '') {
+    finalPayload.cliente_id = Number(payload.cliente_id);
+  }
   finalPayload.nombre_cliente = payload.nombre_cliente;
-  finalPayload.telefono = payload.telefono;
+  finalPayload.telefono = normalizePhoneForWhatsapp(payload.telefono);
   if (payload.cedula !== undefined) finalPayload.cedula = payload.cedula;
   finalPayload.lineas = lines.map((l: any) => {
     const base: any = { producto_id: l.producto_id ?? l.productId ?? l.id, cantidad: Number(l.cantidad ?? 0) };
@@ -957,6 +1260,10 @@ export async function createPedidoVentaPublic(data: any) {
     return base;
   });
   if (payload.tasa_cambio_monto !== undefined) finalPayload.tasa_cambio_monto = payload.tasa_cambio_monto;
+  // Cupón aplicado en el carrito: el backend valida el código y calcula el descuento
+  if (payload.cupon_codigo !== undefined && payload.cupon_codigo !== null && String(payload.cupon_codigo).trim() !== '') {
+    finalPayload.cupon_codigo = String(payload.cupon_codigo).trim().toUpperCase();
+  }
 
   // Si el frontend solicita preservar snapshots (productos) y proporciona productos con snapshot data,
   // incluirlos y calcular total si es posible.
@@ -1031,6 +1338,8 @@ export async function createPedidoVentaPublic(data: any) {
 // src/integrations/api.ts
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
+const WAHA_URL = (import.meta.env.VITE_WHATSAPP_API_URL || '').replace(/\/$/, '');
+const WAHA_API_KEY = import.meta.env.VITE_WAHA_API_KEY || '';
 
 function getToken() {
   return localStorage.getItem("jwt_token");
@@ -1078,6 +1387,35 @@ async function apiFetch(endpoint: string, options: RequestInit = {}) {
   return res.json();
 }
 
+export interface CintilloMensaje {
+  id: number;
+  texto: string;
+  orden: number;
+  activo: boolean;
+}
+
+export async function getMensajesCintilloActivos(): Promise<CintilloMensaje[]> {
+  const response = await fetch(`${API_URL}/cintillo/activos`);
+  if (!response.ok) throw new Error('No se pudieron cargar los mensajes del cintillo');
+  return response.json();
+}
+
+export async function getMensajesCintillo(): Promise<CintilloMensaje[]> {
+  return apiFetch('/cintillo');
+}
+
+export async function createMensajeCintillo(data: Pick<CintilloMensaje, 'texto' | 'orden' | 'activo'>) {
+  return apiFetch('/cintillo', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateMensajeCintillo(id: number, data: Pick<CintilloMensaje, 'texto' | 'orden' | 'activo'>) {
+  return apiFetch(`/cintillo/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function deleteMensajeCintillo(id: number) {
+  return apiFetch(`/cintillo/${id}`, { method: 'DELETE' });
+}
+
 // Image upload to MinIO/S3
 export async function uploadImage(file: File) {
   const formData = new FormData();
@@ -1104,6 +1442,224 @@ export async function uploadImage(file: File) {
 }
 
 export { apiFetch, API_URL, getToken };
+
+function wahaConfigError(context: string) {
+  const host = typeof window !== 'undefined' ? window.location.host : 'unknown-host';
+  const mode = import.meta.env.MODE || 'unknown-mode';
+  return new Error(
+    `[${context}] VITE_WHATSAPP_API_URL no configurado. WAHA_URL="${WAHA_URL}" MODE="${mode}" HOST="${host}"`,
+  );
+}
+
+async function wahaFetch(path: string, options: RequestInit = {}) {
+  if (!WAHA_URL) throw wahaConfigError('wahaFetch');
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...(WAHA_API_KEY ? { 'X-Api-Key': WAHA_API_KEY } : {}),
+    ...(options.headers || {}),
+  };
+  const res = await fetch(`${WAHA_URL}${path}`, {
+    ...options,
+    headers,
+  });
+  const raw = await res.text();
+  let body: any = null;
+  try {
+    body = raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    body = null;
+  }
+
+  if (!res.ok) {
+    const detail = {
+      url: `${WAHA_URL}${path}`,
+      method: options.method || 'GET',
+      status: res.status,
+      statusText: res.statusText,
+      requestHeaders: headers,
+      requestBody: typeof options.body === 'string' ? options.body : '[non-string body]',
+      responseBodyParsed: body,
+      responseBodyRaw: raw,
+    };
+
+    try {
+      // eslint-disable-next-line no-console
+      console.error('[WAHA] request failed', detail);
+    } catch (error) {
+      // ignore console serialization errors
+    }
+
+    throw new Error(
+      body?.message ||
+      body?.error ||
+      `WAHA error ${res.status} ${res.statusText} on ${options.method || 'GET'} ${path}`,
+    );
+  }
+  return body;
+}
+
+function mapWahaSessionStatus(sessionData: any, qrData: any, sessionName: string) {
+  return {
+    ready: sessionData?.status === 'WORKING',
+    hasQr: Boolean(qrData?.data || qrData?.qr),
+    qrImage: qrData?.data ? `data:image/png;base64,${qrData.data}` : null,
+    qrRaw: qrData?.qr || null,
+    session: sessionName,
+    device: {
+      wid: sessionData?.me?.id || null,
+      phone: sessionData?.me?.id ? String(sessionData.me.id).replace('@c.us', '') : null,
+      pushname: sessionData?.me?.pushName || null,
+      platform: sessionData?.engine?.engine || null,
+    },
+    statusCode: (sessionData?.status || 'STOPPED').toLowerCase(),
+    statusMessage: `Estado de sesion: ${sessionData?.status || 'STOPPED'}`,
+    events: {
+      lastReadyAt: null,
+      lastDisconnectedAt: null,
+      lastAuthFailureAt: null,
+      lastAuthFailureMessage: null,
+    },
+    lastSendAttempt: null,
+  };
+}
+
+export async function getWhatsAppSessionStatus(session?: string) {
+  if (WAHA_URL) {
+    const sessionName = (session || 'default').trim() || 'default';
+    let sessionData: any = null;
+    try {
+      sessionData = await wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}`);
+    } catch (error: any) {
+      if (!String(error?.message || '').toLowerCase().includes('not found')) throw error;
+      await wahaFetch('/api/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ name: sessionName }),
+      });
+      await wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}/start`, { method: 'POST' });
+      sessionData = await wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}`);
+    }
+
+    if (sessionData?.status === 'STOPPED' || sessionData?.status === 'FAILED') {
+      await wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}/start`, { method: 'POST' });
+      sessionData = await wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}`);
+    }
+
+    let qrData = null;
+    if (sessionData?.status === 'SCAN_QR_CODE') {
+      qrData = await wahaFetch(`/api/${encodeURIComponent(sessionName)}/auth/qr`);
+    }
+    return mapWahaSessionStatus(sessionData, qrData, sessionName);
+  }
+
+  const query = session ? `?session=${encodeURIComponent(session)}` : '';
+  const body = await apiFetch(`/whatsapp/session/status${query}`);
+  return body?.data || body;
+}
+
+export async function disconnectWhatsAppSession(session?: string) {
+  if (WAHA_URL) {
+    const sessionName = (session || 'default').trim() || 'default';
+    return wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}/logout`, { method: 'POST' });
+  }
+  const body = await apiFetch('/whatsapp/session/disconnect', {
+    method: 'POST',
+    body: JSON.stringify(session ? { session } : {}),
+  });
+  return body?.data || body;
+}
+
+export async function resetWhatsAppSessionStorage(session?: string) {
+  if (WAHA_URL) {
+    const sessionName = (session || 'default').trim() || 'default';
+    try {
+      await wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}`, { method: 'DELETE' });
+    } catch (error) {
+      // ignore if not found
+    }
+    await wahaFetch('/api/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ name: sessionName }),
+    });
+    return wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}/start`, { method: 'POST' });
+  }
+  const body = await apiFetch('/whatsapp/session/reset-storage', {
+    method: 'POST',
+    body: JSON.stringify(session ? { session } : {}),
+  });
+  return body?.data || body;
+}
+
+export async function recoverWhatsAppProfileLock() {
+  const body = await apiFetch('/whatsapp/session/recover-lock', { method: 'POST' });
+  return body?.data || body;
+}
+
+export async function generateWhatsAppNewQr(session?: string) {
+  if (WAHA_URL) {
+    const sessionName = (session || 'default').trim() || 'default';
+    try {
+      await wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}/logout`, { method: 'POST' });
+    } catch (error) {
+      // ignore if not found
+    }
+    try {
+      await wahaFetch('/api/sessions', {
+        method: 'POST',
+        body: JSON.stringify({ name: sessionName }),
+      });
+    } catch (error) {
+      // ignore if already exists
+    }
+    await wahaFetch(`/api/sessions/${encodeURIComponent(sessionName)}/start`, { method: 'POST' });
+    return getWhatsAppSessionStatus(sessionName);
+  }
+  const body = await apiFetch('/whatsapp/session/new-qr', {
+    method: 'POST',
+    body: JSON.stringify(session ? { session } : {}),
+  });
+  return body?.data || body;
+}
+
+export async function getIncomingWhatsAppMessages() {
+  if (WAHA_URL) {
+    return [];
+  }
+  const body = await apiFetch('/whatsapp/messages/incoming');
+  return body?.data || [];
+}
+
+export async function getOutboundOrderWhatsAppMessages() {
+  const body = await apiFetch('/whatsapp/messages/outbound-orders');
+  return body?.data || [];
+}
+
+export async function listWahaChats(session?: string) {
+  if (!WAHA_URL) return [];
+  const sessionName = (session || 'default').trim() || 'default';
+  const body = await wahaFetch(`/api/${encodeURIComponent(sessionName)}/chats`);
+  return Array.isArray(body) ? body : body?.data || [];
+}
+
+export async function listWahaMessages(session?: string, chatId?: string) {
+  if (!WAHA_URL) return [];
+  const sessionName = (session || 'default').trim() || 'default';
+  if (!chatId) return [];
+  const body = await wahaFetch(
+    `/api/${encodeURIComponent(sessionName)}/chats/${encodeURIComponent(chatId)}/messages`,
+  );
+  return Array.isArray(body) ? body : body?.data || [];
+}
+
+export async function sendWahaTextMessage(session: string, to: string, text: string) {
+  if (!WAHA_URL) throw wahaConfigError('sendWahaTextMessage');
+  const cleanSession = (session || 'default').trim() || 'default';
+  const chatId = to.includes('@') ? to : `${to.replace(/\D/g, '')}@c.us`;
+  return wahaFetch('/api/sendText', {
+    method: 'POST',
+    body: JSON.stringify({ session: cleanSession, chatId, text }),
+  });
+}
+
 export async function login(email: string, password: string) {
   const res = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
